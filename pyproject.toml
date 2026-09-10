@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xmlfile"
+description = "Read and write XML metadata files in Python."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "TeamTomo" }]
+keywords = ["xml", "cryo-em", "cryo-et", "metadata", "io"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
+dev = ["xmlfile[test]", "ruff", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/teamtomo/xmlfile"
+Source = "https://github.com/teamtomo/xmlfile"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xmlfile"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.11"
+files = "src/xmlfile"
+strict = true

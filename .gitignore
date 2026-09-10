@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+build/
+dist/
+*.egg-info/
+.venv/
+
+# Unsanitised source XML kept locally for verification, not committed.
+test_xml_files/
+
+# Internal planning document; not part of the package.
+xmlfile_teamtomo_implementation_plan.md
+
+# Local XML corpora used with `pytest --xml-corpus`; not committed.
+tests/corpus/

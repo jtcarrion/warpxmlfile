@@ -1,0 +1,5 @@
+# This package guarantees that reading a file and writing it back reproduces
+# it byte for byte. Git must therefore never translate line endings in the
+# test fixtures: a CRLF checkout on Windows would break that guarantee, and
+# the failure would look like a parser bug rather than a checkout artefact.
+tests/data/*.xml -text
