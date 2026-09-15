@@ -1,0 +1,1255 @@
+# xmlfile TeamTomo Implementation Plan
+
+Prepared for developing a small TeamTomo-style XML I/O package modeled after `starfile`.
+
+## 0. Current status and handoff (updated 2026-09-14)
+
+> Read this section first. It is self-contained and supersedes anything below
+> that conflicts with it. Sections 1–20 are the original plan (2026-09-09),
+> kept for its reasoning; parts that changed are marked **Superseded** inline.
+
+### 0.1 Where everything is
+
+| Item | Location / state |
+| --- | --- |
+| Repository (HPC) | `/orcd/data/mbathe/001/jcarrion/software/xmlfile` |
+| Branch `main` | One commit, `0047f1e` "Add generic ordered XML read/write round-trip support". Clean tree. This is the branch that will eventually go to TeamTomo. |
+| Branch `notes` | Orphan branch (no shared history with `main`) holding only this plan. Keeps planning material out of `main` so it cannot be merged in by accident. |
+| This plan on `main` | Gitignored on purpose. |
+| GitHub | **Not pushed yet.** The private repo `jtcarrion/xmlfile` must be created (empty: no README, license or .gitignore), then `main` and `notes` pushed. |
+| TeamTomo | Nothing submitted. No Zulip post yet. `teamtomo/xmlfile` does not exist. |
+
+### 0.2 Picking this up on a new machine
+
+```bash
+git clone git@github.com:jtcarrion/xmlfile.git
+cd xmlfile
+git show origin/notes:xmlfile_teamtomo_implementation_plan.md > xmlfile_teamtomo_implementation_plan.md
+
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install pytest                 # enough: pyproject sets pythonpath = ["src"]
+pytest                             # expect: 77 passed, 1 skipped
+```
+
+`pip install -e ".[test]"` has **never been verified**: the HPC cannot reach
+PyPI, so hatchling/hatch-vcs could not be fetched. Try it first on the new
+machine. The skipped test is the corpus test, which needs local data (see 0.9).
+
+### 0.3 Milestone status
+
+| Milestone | Status |
+| --- | --- |
+| M0 bootstrap | **Mostly done.** Package skeleton, BSD-3 LICENSE, README, pyproject, `py.typed`, `.gitattributes`. Gaps: editable install unverified; **ruff and mypy never run**; no CI; not generated from the TeamTomo template (see 0.8, decision A). |
+| M1 ordered XML core | **Done.** 77 tests pass; byte-exact round trip on the fixture and on 201 local Warp files. |
+| M2 helpers | **Not started.** Now in scope for v0.0.1 (decision 6). Should be designed against torch-tilt-series needs (0.6). |
+| M3 Warp adapter in xmlfile | **Dropped** for v0.0.1 (decision 6). |
+| M4 torch-tilt-series loader | Later, downstream, in torch-tilt-series itself. |
+
+### 0.4 What is built on `main`
+
+```text
+.gitattributes          tests/data/*.xml -text (no CRLF translation, protects byte-exactness on Windows CI)
+.gitignore
+LICENSE                 BSD 3-Clause
+README.md
+pyproject.toml          hatchling + hatch-vcs; ruff; mypy strict; pytest pythonpath=src; requires-python >=3.11; no runtime deps
+src/xmlfile/
+  __init__.py           exports read, write, to_string, from_string, XmlDocument, XmlElement,
+                        XmlDeclaration, XmlParseError, XmlLossyContentWarning, __version__
+  functions.py          thin public wrappers
+  models.py             XmlDeclaration, XmlElement (find/findall/get/iter), XmlDocument
+  parser.py             XmlParser on xml.parsers.expat (namespace processing off)
+  writer.py             XmlWriter: verbatim (default) or pretty (indent=...)
+  typing.py, utils.py, py.typed
+tests/
+  conftest.py           Fixture metadata; --xml-corpus option
+  data/TS_1.xml         the single committed fixture
+  test_read.py  test_round_trip.py  test_write.py  test_models.py
+  test_errors.py  test_edge_cases.py  test_corpus.py
+```
+
+Behaviour:
+
+- `read(path, preserve_whitespace=True)` → `XmlDocument`. Values are always strings; nothing is coerced, reordered or dropped.
+- `XmlDocument` fields: `root`, `declaration`, `byte_order_mark`, `prologue_tail`, `epilogue`, `filename` (`filename` is excluded from equality).
+- `to_string(doc)` reproduces the source **byte for byte** by default (BOM, tabs, no trailing newline). `to_string(doc, indent="  ")` pretty-prints; best used with `read(..., preserve_whitespace=False)`.
+- `write(doc, path)` **overwrites by default**; `overwrite=False` raises `FileExistsError`.
+- Namespaces: prefixes and `xmlns` declarations are kept verbatim.
+- External entity references are refused (`XmlParseError`).
+- Comments and processing instructions are dropped **with an `XmlLossyContentWarning`**.
+
+Byte-exact exceptions (all semantically lossless except the last):
+
+| Input | Output |
+| --- | --- |
+| `<b></b>` or `<b/>` | `<b />` |
+| `<![CDATA[a < b]]>` | `a &lt; b` |
+| `\r\n` in content | `\n` (required by the XML spec) |
+| `&gt;` in text | `>` (`>` is only escaped inside `]]>`) |
+| comments, processing instructions | dropped, with a warning |
+
+Fixture: `tests/data/TS_1.xml` comes from EMPIAR-10491 (a public deposition), from
+`processing/EMPIAR-10491-5TS/warp_tiltseries/TS_1.xml`. 9 root attributes,
+112 children, 41 tilts, CTF 21 params, OptionsCTF 24 params, GridMovementX
+and GridVolumeWarpX 984 nodes each (5373 grid nodes total). `DataDirectory` was replaced with
+`/path/to/tomostar`; nothing else changed.
+
+History: the three original fixtures (including unpublished bmp6 data) were
+committed early, then removed. History was then squashed to one commit and
+garbage-collected, so they are **not** in `main`'s history.
+
+### 0.5 Decisions made (answers to section 19)
+
+1. **Name:** keep `xmlfile`. PyPI availability not checked (PyPI unreachable from the HPC); check before release.
+2. **Fixtures:** commit one file only (`TS_1.xml`, public EMPIAR provenance, most complete available). Other XML stays local and is validated with `pytest --xml-corpus DIR`.
+3. **Parser:** standard library yes, `ElementTree` no. ElementTree rewrites `<w:b>` to `{uri}b` and silently deletes the `xmlns:w` attribute, so the parser drives `expat` directly. No lxml.
+4. **Fidelity:** byte-exact by default; pretty-printing opt-in. Only comments/PIs lose content. Closing the cosmetic gaps would need a custom lexer and is not planned; comment/PI node types could be added if a real file needs them. Property-based tests (`hypothesis`) are an option for stronger guarantees.
+5. **pandas:** acceptable as a dependency (TeamTomo I/O packages such as alnfile already depend on it).
+6. **Scope of v0.0.1:** a robust reader/writer plus helper functions. No Warp-specific adapter in xmlfile. Downstream goal: a loader in torch-tilt-series that uses the XML data.
+7. **Overwrite:** `write` overwrites by default, like starfile and mdocfile. This supports editing ("perturbing") alignments and rerunning torch-tilt-series.
+
+### 0.6 Research findings (2026-09-10)
+
+**Route into TeamTomo.** TeamTomo is now a monorepo (`teamtomo/teamtomo`,
+`packages/{primitives,algorithms,utils,skel}`). torch-tilt-series is in
+`packages/primitives/`, torch-tiltxcorr in `packages/algorithms/`. But
+`CONTRIBUTING.md` says: *"if this is an I/O package, please reach out on Zulip
+for creating a new repo under the organization."* So xmlfile does **not** go in
+the monorepo: post on Zulip (imagesc.zulipchat.com, channel TeamTomo) and
+maintainers create `teamtomo/xmlfile`.
+
+**Template to match: `teamtomo/alnfile`**, a standalone I/O repo that torch-tilt-series
+consumes through `torch-tilt-series[io]`. It has:
+
+- `.copier-answers.yml` from `gh:pydev-guide/pyrepo-copier`, mode `tooling`
+- `test_data/` at the repo root (we use `tests/data/`)
+- `mkdocs.yml` and `docs/index.md` (MkDocs Material)
+- `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, dependabot, issue templates
+- CI: uv; Python 3.10–3.13 on ubuntu, macos and windows; a check-manifest job
+- `requires-python = ">=3.10"`; depends on pandas and pydantic
+
+**Monorepo `packages/skel/pyproject.toml` conventions** we do not yet follow:
+`[dependency-groups]` (PEP 735) for test/dev; ruff selects `E W F D D417 I UP C4 B A001 RUF TCH TID`
+with pydocstyle numpy convention; mypy `strict = true` with
+`disallow_any_generics = false`, `disallow_subclassing_any = false`;
+pytest `filterwarnings = ["error"]`; coverage and check-manifest config.
+
+**What torch-tilt-series needs.** `torch_tilt_series/io.py` has
+`from_aretomo_output(aln_path, pixel_spacing, image_path=None, device="cpu")`
+built on alnfile. A `from_warp_xml` built on xmlfile would follow the same pattern.
+Mapping from `TiltSeries.__init__` to Warp XML:
+
+| TiltSeries parameter | Warp XML source | Confidence |
+| --- | --- | --- |
+| `tilt_angles` | `<Angles>` | direct |
+| `tilt_axis_angle` | `<AxisAngle>` | direct |
+| `sample_translations` (Å, `(y, x)` per tilt) | `<AxisOffsetY>`, `<AxisOffsetX>` | **units and sign unverified** |
+| `pixel_spacing` | `CTF/Param[@Name="PixelSize"]` | direct |
+| `image_indices` | `<UseTilt>` | direct |
+| `image_path` | `<MoviePath>` (relative paths) | direct |
+| `x_tilts`, `sample2levelled` | `PlaneNormal`, `LevelAngleX/Y` (some workflows) | needs work |
+| `local_shifts`, `local_shifts_2d` (`Callable[[Tensor], Tensor]`) | `GridMovementX/Y`, `GridVolumeWarpX/Y/Z` | needs work; this is where the dense grids go |
+
+The commit the user linked, `2c81e6b` (PR #126, Marten Chaillet, 2026-09-08),
+moved tilt-image loading and preprocessing from torch-reconstruct-tomogram into
+torch-tilt-series. That module is actively changing, so coordinate before
+building against it. The commit uses the same `Co-Authored-By: Claude …` /
+`Claude-Session:` trailer style as our commit.
+
+### 0.7 Known issues and suspicions (unverified)
+
+- **mypy strict probably fails**: untyped `**kwargs` in `functions.py` (`to_string`, `write`); `_refuse_external_entity` in `parser.py` is annotated `-> bool` but always raises.
+- **ruff `D` rules** (if adopted from the TeamTomo template) will flag docstrings that are not numpy style.
+- `pyproject.toml` uses `[project.optional-dependencies]` for test/dev; TeamTomo uses `[dependency-groups]`.
+- hatch-vcs without a git tag gives a version like `0.1.dev1+g0047f1e`.
+- The corpus directories are HPC-only.
+
+### 0.8 Open decisions
+
+- **A. Template:** regenerate the repo from `pyrepo-copier` (recommended: looks native to TeamTomo reviewers, includes CI, pre-commit and mkdocs) and port `src/` and `tests/` in, **or** hand-align the current pyproject.
+- **B. Python floor:** 3.10 (alnfile) or 3.11 (current, monorepo skel). The code does not need 3.11.
+- **C. Helper design:** design M2 helpers backwards from the TiltSeries mapping in 0.6 (recommended), rather than only from section 11's generic list. The grid helper's output shape is the main question (DataFrame vs. something convertible into a `LocalShiftFn`).
+- **D. Test data location:** `tests/data/` (current) or `test_data/` (alnfile).
+- **E. Release/version:** when to tag `v0.0.1`.
+- **F. `AxisOffsetX/Y` units and sign:** needs Warp documentation or a maintainer.
+
+### 0.9 Next steps, in order
+
+1. Create the private GitHub repo `jtcarrion/xmlfile` (empty) and push both branches:
+   ```bash
+   cd /orcd/data/mbathe/001/jcarrion/software/xmlfile
+   git remote add origin git@github.com:jtcarrion/xmlfile.git
+   git push -u origin main
+   git push origin notes
+   ```
+2. Decide A and B; regenerate from the template or align by hand; add CI; get `pip install -e`, ruff, mypy and pytest green on 3.10/3.11–3.13 × 3 OSes.
+3. Decide C; build M2 helpers (pandas allowed) with tests.
+4. Post the proposal on the TeamTomo Zulip, including the open questions.
+5. Later: `from_warp_xml` in torch-tilt-series.
+
+### 0.10 HPC-only resources (will not exist elsewhere)
+
+- `xmlfile/test_xml_files/`: unsanitised originals `00269.xml`, `00316.xml` (EMPIAR-10499) and `TS_001.xml` (bmp6, unpublished). Gitignored.
+- Corpus directories, all verified byte-exact (201 files total):
+  `processing/bmp6/warp_tiltseries` (98 files), `processing/bmp6/warp_tiltseries_ssedorAlign` (13-root-attribute workflow),
+  `processing/EMPIAR-10491-5TS/warp_tiltseries`. All under `/orcd/data/mbathe/001/jcarrion/`.
+  Run: `pytest tests/test_corpus.py --xml-corpus <dir>`.
+- `xmlfile/.venv`: Python 3.12 with pytest. In non-interactive shells run
+  `source /usr/share/lmod/lmod/init/bash && module load miniforge/25.11.0-0` first.
+- Network from the HPC: GitHub works (SSH authenticates as `jtcarrion`); PyPI is blocked.
+
+---
+
+## 1. Decision from TeamTomo developer discussion
+
+> **Confirmed (2026-09-10):** TeamTomo's `CONTRIBUTING.md` says I/O packages get their own repo under the organization, requested via Zulip, rather than going into the monorepo. See section 0.6.
+
+The agreed direction is:
+
+- Build a separate lightweight I/O repository, not a processing package inside the main `teamtomo/teamtomo` monorepo.
+- Follow the `starfile` pattern:
+  - public API: `read`, `write`, and `to_string`
+  - internal parser/writer classes
+  - passive data containers
+  - round-trip tests
+- Start simple and correct.
+- Preserve XML structure and ordering robustly before adding convenience features.
+
+## 2. TeamTomo resources reviewed
+
+### TeamTomo website
+
+Source: <https://teamtomo.org/>
+
+Relevant principles:
+
+- TeamTomo is organized around modular Python packages for cryo-EM/cryo-ET.
+- The website emphasizes simple, composable packages that make it easier to work with cryo-EM data in Python.
+- Target users include scientists scripting around metadata and methods developers who do not want to reimplement basic infrastructure.
+
+Implication for `xmlfile`:
+
+`xmlfile` should be a small composable utility, not a full XML-to-reconstruction workflow.
+
+### Input/output package overview
+
+Source: <https://teamtomo.org/site/io_packages/>
+
+Existing metadata I/O packages listed by TeamTomo include:
+
+- `starfile` — read and write STAR files
+- `imodmodel` — read and write IMOD model files
+- `mdocfile` — read and write SerialEM metadata files
+- `alnfile` — read AreTomo alignment files
+- `etomofiles` — read IMOD etomo alignment files
+- `dynamotable` — read and write Dynamo table files
+
+Implication for `xmlfile`:
+
+A Warp-style XML metadata reader/writer fits the TeamTomo I/O-package family. It should not be classified as a primitive or algorithm.
+
+### Contribution guidelines
+
+Source: <https://teamtomo.org/site/contributing/>
+
+Relevant principles:
+
+- Start by discussing proposed packages on the TeamTomo Zulip.
+- Packages should do one thing and do it well.
+- Packages should have a simple Python API.
+- Packages should be easy to install.
+- Packages should be tested.
+- TeamTomo recommends a modern Python packaging template with testing and PyPI deployment.
+- TeamTomo documentation uses MkDocs Material.
+
+Implication for `xmlfile`:
+
+The first implementation should focus only on XML I/O and preservation. Tests should be included from the beginning. Documentation can start minimal but should be compatible with TeamTomo documentation conventions.
+
+### TeamTomo GitHub organization
+
+Source: <https://github.com/teamtomo>
+
+Relevant principles:
+
+- TeamTomo packages are small, modular, easy to install, well-scoped, Pythonic, type-hinted, and tested.
+- TeamTomo projects should use the BSD 3-Clause License.
+- `starfile`, `mdocfile`, `imodmodel`, `etomofiles`, and related readers are distributed as separate repositories.
+
+Implication for `xmlfile`:
+
+Use a separate repository with BSD 3-Clause licensing and narrow scope. Do not start inside the main monorepo unless maintainers explicitly request that later.
+
+### `starfile` repository
+
+Source: <https://github.com/teamtomo/starfile>
+
+Important style points:
+
+- `starfile` is a package for reading and writing STAR files in Python.
+- Its user-facing API is simple: `read`, `write`, and `to_string`.
+- Its public `__init__.py` only exports those functions.
+- It uses internal `StarParser` and `StarWriter` classes.
+- It exposes data as simple Python dictionaries or pandas DataFrames.
+- Its internal data type is intentionally small: STAR data blocks are dictionaries or DataFrames.
+- Its `pyproject.toml` uses a modern packaging setup with `hatchling`, `hatch-vcs`, `ruff`, `mypy`, `pytest`, and package metadata.
+
+Implication for `xmlfile`:
+
+Use `starfile` as the style template, but do not copy its dataframe-first data model exactly. XML is hierarchical and ordered, so we need passive XML tree containers.
+
+### `torch-tilt-series`
+
+> **Superseded (2026-09-14):** torch-tilt-series now lives in the monorepo at `teamtomo/teamtomo/packages/primitives/torch-tilt-series`. Its `io.py` and `TiltSeries` fields are mapped to Warp XML in section 0.6. See section 0.
+
+Source: <https://github.com/teamtomo/torch-tilt-series>
+
+Relevant boundaries:
+
+- `torch-tilt-series` handles tilt-series geometry, alignment metadata, coordinate transforms, projection matrices, and point projection.
+- Its README states that subtilt/subvolume extraction and full volume reconstruction live in `torch-reconstruct-tomogram`.
+- Current loaders support AreTomo `.aln` and ETOMO directories through `alnfile` and `etomofiles`.
+
+Implication for `xmlfile`:
+
+`xmlfile` should not construct projection matrices or perform point projection. Later, `torch-tilt-series` can optionally provide a loader that consumes `xmlfile` output.
+
+### `cryoet-alignment`
+
+Sources:
+
+- PyPI: <https://pypi.org/project/cryoet-alignment/>
+- GitHub: <https://github.com/uermel/cryoet-alignment>
+
+Relevant points:
+
+- The package converts between IMOD, AreTomo3, cryoET Data Portal, RELION, and Warp alignment formats.
+- It has a simple `read` / `write` API.
+- Its Warp XML reader explicitly requires `reader="warp"`; `.xml` is intentionally not auto-inferred because XML is too generic.
+- Its Warp XML implementation models only global per-tilt alignment fields: angles, tilt-axis rotation, and 2D shifts.
+- It intentionally does not model local 2D warp grids, 4D volume warp grids, doses, CTF fits, and other fields; those fields are ignored on read and omitted on write.
+
+Implication for `xmlfile`:
+
+`cryoet-alignment` is a useful reference for parsing some Warp XML alignment fields, but it should not be the base behavior for `xmlfile`. Our package must preserve unknown and currently unmodeled XML content by default. Dropping fields is only acceptable in explicit conversion/adaptor functions with loud documentation.
+
+## 3. Initial XML fixtures reviewed
+
+> **Superseded (2026-09-14):** `TS_0.xml` was never found on disk, and the real `TS_069.xml` has 9 root attributes, not 13. The repository now ships one fixture, `tests/data/TS_1.xml` (EMPIAR-10491), and validates other files with `pytest --xml-corpus`. The structure described below is still representative of Warp files. See section 0.
+
+Two uploaded example XML files should become the first test fixtures.
+
+### `TS_0.xml`
+
+Observed structure:
+
+- Root tag: `TiltSeries`
+- Root attributes: 12
+- Child elements: 27
+- Tilt count from `Angles`: 31
+- Per-tilt newline-separated fields:
+  - `Angles`
+  - `Dose`
+  - `UseTilt`
+  - `AxisAngle`
+  - `AxisOffsetX`
+  - `AxisOffsetY`
+  - `MoviePath`
+  - `FOVFraction`
+- `CTF` block with 21 `Param` elements
+- Grid blocks with one `Node` each
+- No repeated `TiltPS1D` elements
+- No `OptionsCTF` block
+- No `TiltSimulatedScale` elements
+
+### `TS_069.xml`
+
+Observed structure:
+
+- Root tag: `TiltSeries`
+- Root attributes: 13
+- Child elements: 102
+- Tilt count from `Angles`: 36
+- Per-tilt newline-separated fields:
+  - `Angles`
+  - `Dose`
+  - `UseTilt`
+  - `AxisAngle`
+  - `AxisOffsetX`
+  - `AxisOffsetY`
+  - `MoviePath`
+  - `FOVFraction`
+- `CTF` block with 21 `Param` elements
+- `OptionsCTF` block with 24 `Param` elements
+- 36 repeated `TiltPS1D` elements
+- 36 repeated `TiltSimulatedScale` elements
+- Grid blocks with larger node counts, including:
+  - `GridMovementX`: 6 × 4 × 36 = 864 nodes
+  - `GridMovementY`: 6 × 4 × 36 = 864 nodes
+  - `GridVolumeWarpX`: 4 × 6 × 4 × 10 = 960 nodes
+  - `GridVolumeWarpY`: 4 × 6 × 4 × 10 = 960 nodes
+  - `GridVolumeWarpZ`: 4 × 6 × 4 × 10 = 960 nodes
+
+Implication:
+
+The package must preserve ordered children, repeated tags, nested `Param` lists, dense grid-node blocks, and large pair-series text blocks. A simple dictionary-only representation is not enough for the core object model.
+
+## 4. Package name and scope
+
+Recommended repository name:
+
+```text
+teamtomo/xmlfile
+```
+
+Recommended Python import name:
+
+```python
+import xmlfile
+```
+
+Reasons:
+
+- Mirrors `starfile`.
+- Avoids overfitting to Warp in the package name.
+- Keeps room for future cryo-ET XML metadata formats.
+- Avoids conflict with Python standard-library `xml`.
+
+Alternative names to discuss only if maintainers prefer tighter scope:
+
+```text
+teamtomo/warpfile
+teamtomo/warpxml
+teamtomo/warp-xmlfile
+```
+
+Current recommendation:
+
+Use `xmlfile` as the generic low-level XML I/O package. Put Warp-specific interpretation in an adapter module later.
+
+## 5. Design goals
+
+The package should:
+
+1. Read XML files into passive, ordered Python objects.
+2. Write those objects back to XML.
+3. Preserve root attributes, attribute order, child order, repeated elements, nested elements, text, and empty elements.
+4. Provide `read`, `write`, and `to_string` as the main public API.
+5. Keep parser/writer classes internal.
+6. Provide small helper functions for common patterns after the round-trip core is stable.
+7. Avoid hidden semantic conversions in the generic parser.
+8. Keep dependencies minimal.
+9. Use tests as the main safety net.
+
+## 6. Explicit non-goals for the initial package
+
+The initial package should not:
+
+- Compute projection matrices.
+- Perform tilt-series alignment.
+- Reconstruct tomograms or subvolumes.
+- Load image stacks.
+- Depend on PyTorch.
+- Depend on `torch-tilt-series`.
+- Convert XML directly into `TiltSeries` as part of the generic parser.
+- Drop unknown fields.
+- Normalize or reorder XML content by default.
+- Infer that every `.xml` file is a Warp tilt-series XML.
+
+## 7. Proposed repository layout
+
+> **Superseded (2026-09-14):** The actual layout is listed in section 0.4 (it adds `tests/test_edge_cases.py`, `tests/test_errors.py`, `tests/test_corpus.py`, `tests/conftest.py`, `.gitattributes`, and uses `tests/data/TS_1.xml`). There is no `adapters/` directory, and none is planned for v0.0.1. See section 0.
+
+```text
+xmlfile/
+  README.md
+  LICENSE
+  pyproject.toml
+  src/
+    xmlfile/
+      __init__.py
+      functions.py
+      models.py
+      parser.py
+      writer.py
+      typing.py
+      utils.py
+      py.typed
+  tests/
+    data/
+      TS_0.xml
+      TS_069.xml
+    test_read.py
+    test_write.py
+    test_round_trip.py
+    test_models.py
+    test_helpers.py
+```
+
+Potential later layout:
+
+```text
+src/xmlfile/adapters/
+  __init__.py
+  warp.py
+```
+
+Do not add `adapters/` until the generic core passes tests.
+
+## 8. Proposed public API
+
+The first public API should be intentionally small:
+
+```python
+import xmlfile
+
+doc = xmlfile.read("TS_069.xml")
+xmlfile.write(doc, "copy.xml")
+text = xmlfile.to_string(doc)
+```
+
+`src/xmlfile/__init__.py` should be close to:
+
+```python
+from .functions import read, write, to_string
+from .models import XmlDocument, XmlElement
+```
+
+Optional later exports:
+
+```python
+from .functions import from_string
+```
+
+Only export additional helpers once there is a clear need.
+
+## 9. Proposed passive data model
+
+### Core scalar type
+
+Initial values should be preserved as strings by default. Numeric conversion should happen only in explicit helper functions.
+
+```python
+Scalar = str | None
+```
+
+Do not automatically coerce XML attribute values into `int`, `float`, or `bool` in the base parser. XML stores strings. Automatic coercion can silently corrupt formatting, precision, or intentional string values.
+
+### `XmlDeclaration`
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class XmlDeclaration:
+    version: str = "1.0"
+    encoding: str = "utf-8"
+    standalone: str | None = None
+    quote: str = '"'
+```
+
+Purpose:
+
+- Preserve XML declaration values.
+- Avoid accidentally changing declaration style unless the writer is explicitly configured to normalize formatting.
+
+### `XmlElement`
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class XmlElement:
+    tag: str
+    attributes: dict[str, str] = field(default_factory=dict)
+    text: str | None = None
+    children: list["XmlElement"] = field(default_factory=list)
+    tail: str | None = None
+```
+
+Important behavior:
+
+- Preserve child order using a list.
+- Preserve attribute insertion order using Python dictionaries.
+- Preserve repeated tags naturally through `children`.
+- Preserve text as raw strings.
+- Preserve `tail` text if needed for faithful round-trip behavior.
+
+Optional convenience methods, if kept simple:
+
+```python
+element.findall("TiltPS1D")
+element.find("CTF")
+element.get("PixelSize")
+```
+
+These should be navigation helpers only. They should not perform scientific interpretation.
+
+### `XmlDocument`
+
+> **Superseded (2026-09-14):** `XmlDocument` also has `byte_order_mark`, `prologue_tail` and `epilogue`, which byte-exact output needs, and `filename` is excluded from equality. See section 0.
+
+```python
+@dataclass
+class XmlDocument:
+    root: XmlElement
+    declaration: XmlDeclaration | None = None
+    filename: Path | None = None
+```
+
+The document should be a passive container.
+
+## 10. Parser design
+
+### `functions.py`
+
+Responsibilities:
+
+```python
+def read(filename, *, preserve_whitespace=True) -> XmlDocument:
+    parser = XmlParser(filename, preserve_whitespace=preserve_whitespace)
+    return parser.document
+
+
+def to_string(document, **kwargs) -> str:
+    return XmlWriter(document, **kwargs).to_string()
+
+
+def write(document, filename, **kwargs) -> None:
+    XmlWriter(document, filename=filename, **kwargs).write()
+```
+
+Keep this layer thin, like `starfile.functions`.
+
+### `parser.py`
+
+> **Superseded (2026-09-14):** The parser uses `xml.parsers.expat`, not `ElementTree`, because ElementTree deletes `xmlns` declarations. It also refuses external entities and warns (`XmlLossyContentWarning`) when it drops comments or processing instructions. See section 0.
+
+Responsibilities:
+
+- Validate that the path exists.
+- Read text with the correct encoding.
+- Parse XML declaration if present.
+- Parse root and all descendants into `XmlDocument` / `XmlElement`.
+- Preserve element order, attributes, repeated tags, text, and tail.
+- Raise clear errors for malformed XML.
+
+Potential implementation options:
+
+1. Standard library `xml.etree.ElementTree`
+   - Pros: no dependency.
+   - Cons: does not preserve comments or every formatting detail perfectly.
+
+2. `lxml`
+   - Pros: stronger support for comments, processing instructions, line numbers, and richer parsing.
+   - Cons: additional dependency and potentially less lightweight.
+
+Initial recommendation:
+
+Start with the standard library unless tests show that preserving comments, processing instructions, or more detailed formatting is required. The provided fixtures do not require comments or namespaces for the first version.
+
+### `writer.py`
+
+> **Superseded (2026-09-14):** `indent` defaults to `None` (verbatim, byte-exact output); passing `indent="  "` pretty-prints. `write` also takes `byte_order_mark` and `overwrite` (default `True`). See section 0.
+
+Responsibilities:
+
+- Serialize `XmlDocument` / `XmlElement` back to XML.
+- Preserve child order.
+- Preserve repeated sibling order.
+- Preserve attribute order.
+- Preserve text values without numeric reformatting.
+- Write to disk only when explicitly requested.
+
+Writer options to consider:
+
+```python
+def to_string(
+    document: XmlDocument,
+    *,
+    encoding: str | None = None,
+    xml_declaration: bool = True,
+    indent: str = "  ",
+    preserve_empty_elements: bool = True,
+) -> str:
+    ...
+```
+
+Avoid adding too many formatting options in the first PR. Start with the options needed to safely round-trip the fixtures.
+
+## 11. Helper utilities after core round-trip
+
+> **Status (2026-09-14):** Not started. In scope for v0.0.1, and pandas is allowed. Consider designing these against the torch-tilt-series mapping in section 0.6 (open decision C).
+
+Add helpers only after the generic XML core is stable.
+
+### List-like text fields
+
+Warp-style tilt-series XML uses newline-separated text fields:
+
+- `Angles`
+- `Dose`
+- `UseTilt`
+- `AxisAngle`
+- `AxisOffsetX`
+- `AxisOffsetY`
+- `MoviePath`
+- `FOVFraction`
+
+Proposed helpers:
+
+```python
+def text_to_list(element: XmlElement, dtype=str) -> list:
+    ...
+
+
+def get_child_text_list(parent: XmlElement, tag: str, dtype=str) -> list:
+    ...
+```
+
+Safety rule:
+
+These helpers may coerce values, but the base parser must not.
+
+### `Param` blocks
+
+Common XML pattern:
+
+```xml
+<Param Name="PixelSize" Value="1.3680"/>
+```
+
+Proposed helper:
+
+```python
+def params_to_dict(element: XmlElement) -> dict[str, str]:
+    ...
+```
+
+Safety rule:
+
+If duplicate `Name` values occur, do not silently overwrite by default. Either return a list of pairs or raise unless `allow_duplicates=True`.
+
+### Grid blocks
+
+Common XML pattern:
+
+```xml
+<GridMovementX Width="6" Height="4" Depth="36" MarginX="0" MarginY="0" MarginZ="0">
+  <Node X="0" Y="0" Z="0" Value="..."/>
+</GridMovementX>
+```
+
+Proposed helper:
+
+```python
+def grid_to_dataframe(element: XmlElement):
+    ...
+```
+
+Potential output columns:
+
+```text
+X
+Y
+Z
+W
+Value
+```
+
+Safety checks:
+
+- Preserve node order.
+- Check `len(nodes) == Width * Height * Depth` when no `Duration` is present.
+- Check `len(nodes) == Width * Height * Depth * Duration` when `Duration` is present.
+- Do not reshape into a NumPy array until dimension order is documented and tested.
+
+### Pair-series text fields
+
+Common XML pattern:
+
+```xml
+<TiltPS1D ID="0">0|14417.534;0.001953125|3488.794;...</TiltPS1D>
+```
+
+Proposed helper:
+
+```python
+def parse_pair_series(element: XmlElement):
+    ...
+```
+
+Potential dataframe columns:
+
+```text
+x
+y
+```
+
+For repeated per-tilt series:
+
+```python
+def repeated_pair_series_to_dataframe(parent: XmlElement, tag: str):
+    ...
+```
+
+Potential output columns:
+
+```text
+id
+x
+y
+```
+
+Safety checks:
+
+- Preserve input order.
+- Do not assume IDs are continuous unless explicitly validated.
+- Raise clear errors for malformed `x|y` pairs.
+
+## 12. Warp-specific adapter layer, later
+
+> **Superseded (2026-09-14):** A Warp adapter is **not** planned for xmlfile v0.0.1 (decision 6). Warp interpretation is expected to live downstream in torch-tilt-series (`from_warp_xml`). See section 0.
+
+Only after the generic XML package is robust, add:
+
+```text
+src/xmlfile/adapters/warp.py
+```
+
+Potential functions:
+
+```python
+def is_warp_tilt_series_xml(doc: XmlDocument) -> bool:
+    ...
+
+
+def tilt_table(doc: XmlDocument):
+    ...
+
+
+def ctf_parameters(doc: XmlDocument):
+    ...
+
+
+def options_ctf_parameters(doc: XmlDocument):
+    ...
+
+
+def grids(doc: XmlDocument):
+    ...
+
+
+def tilt_ps1d(doc: XmlDocument):
+    ...
+```
+
+Important boundary:
+
+These adapter functions should expose structured metadata. They should not construct a `torch_tilt_series.TiltSeries` in the base XML package.
+
+Potential future integration should live in `torch-tilt-series`:
+
+```python
+from torch_tilt_series.io import from_warp_xml
+```
+
+That loader can depend optionally on `xmlfile` and map selected metadata into `TiltSeries` fields.
+
+## 13. Testing plan
+
+### Test category 1: basic read
+
+> **Superseded (2026-09-14):** Fixture counts now come from `TS_1.xml`: 9 root attributes, 112 children, 41 tilts, CTF 21, OptionsCTF 24, TiltPS1D 41, TiltSimulatedScale 41, GridMovementX and GridVolumeWarpX 984 nodes each. See section 0.
+
+Tests:
+
+- Read `TS_0.xml`.
+- Read `TS_069.xml`.
+- Root tag is `TiltSeries`.
+- Root attributes are preserved.
+- First child order is preserved.
+- Repeated tags are preserved.
+
+Expected fixture-specific checks:
+
+```text
+TS_0.xml:
+  root attributes = 12
+  child elements = 27
+  nonempty Angles entries = 31
+  CTF Param count = 21
+
+TS_069.xml:
+  root attributes = 13
+  child elements = 102
+  nonempty Angles entries = 36
+  CTF Param count = 21
+  OptionsCTF Param count = 24
+  TiltPS1D count = 36
+  TiltSimulatedScale count = 36
+```
+
+### Test category 2: semantic round-trip
+
+> **Superseded (2026-09-14):** Byte-for-byte equality **is** tested and passes, in addition to semantic equality. See section 0.
+
+Tests:
+
+```python
+original = xmlfile.read(path)
+text = xmlfile.to_string(original)
+copy = xmlfile.from_string(text)
+assert copy == original
+```
+
+Semantic identity must include:
+
+- root tag
+- root attributes and their order
+- child order
+- repeated element order
+- element text
+- nested children
+- nested attributes
+
+Do not require byte-for-byte equality in PR 1.
+
+### Test category 3: write/read round-trip
+
+Tests:
+
+```python
+doc = xmlfile.read(path)
+xmlfile.write(doc, tmp_path / "copy.xml")
+copy = xmlfile.read(tmp_path / "copy.xml")
+assert copy == doc
+```
+
+### Test category 4: helper functions
+
+Tests after helper functions are added:
+
+- `text_to_list(Angles, float)` length matches tilt count.
+- `text_to_list(UseTilt, bool)` returns booleans only when requested.
+- `params_to_dict(CTF)` includes `PixelSize`.
+- `grid_to_dataframe(GridMovementX)` returns 864 rows for `TS_069.xml`.
+- `grid_to_dataframe(GridVolumeWarpX)` returns 960 rows for `TS_069.xml`.
+- `parse_pair_series(TiltPS1D[0])` returns expected number of pairs.
+- duplicate `Param Name` entries are handled explicitly.
+
+### Test category 5: malformed XML and safety failures
+
+Tests:
+
+- Missing file raises `FileNotFoundError`.
+- Malformed XML raises a useful parse error.
+- Helper with wrong expected count raises `ValueError`.
+- Duplicate params do not silently overwrite unless explicitly allowed.
+- `write(..., overwrite=False)` refuses to overwrite existing files if that option is implemented.
+
+## 14. Safety checks for coding
+
+### Preservation safety
+
+- Never drop unknown elements in the generic parser.
+- Never drop unknown attributes in the generic parser.
+- Never reorder children.
+- Never reorder repeated tags.
+- Never convert values to numeric types in the base parser.
+- Never normalize scientific values in the base writer.
+- Preserve large text blocks as text in the core model.
+
+### File safety
+
+> **Superseded (2026-09-14):** `write` overwrites by default (decision 7); `overwrite=False` refuses. Fixture paths are sanitised. See section 0.
+
+- Do not overwrite user files by default if an `overwrite` option is added.
+- Use temporary files in tests.
+- Keep fixture paths anonymized if needed before committing.
+- Avoid storing lab-specific absolute paths in public fixtures unless approved.
+
+### Scientific safety
+
+- Do not guess pixel size.
+- Do not infer units silently.
+- Do not assume `AxisOffsetX/Y` are pixels; in Warp-style files these can be Angstrom-style metadata depending on context.
+- Do not assume XML fields are aligned unless lengths are checked.
+- Do not assume `TiltPS1D ID` values are continuous without validation.
+- Do not reshape grids until axis order is documented.
+- Do not discard local movement/volume-warp grids.
+
+### Scope safety
+
+- Keep `xmlfile` independent of PyTorch.
+- Keep `xmlfile` independent of reconstruction code.
+- Keep `xmlfile` independent of `torch-tilt-series` in PR 1.
+- Put scientific adapters behind explicit function names.
+- Make lossy conversions explicit and documented.
+
+### API safety
+
+- Keep the top-level API small.
+- Do not auto-infer that `.xml` means Warp XML unless maintainers explicitly request this later.
+- If a format-specific reader is added, require an explicit call such as `xmlfile.adapters.warp.read_tilt_series_xml(...)`.
+
+### Dependency safety
+
+> **Superseded (2026-09-14):** pandas is accepted as a dependency (decision 5). The core currently has no runtime dependencies. The Python floor (3.10 or 3.11) is open decision B. See section 0.
+
+Start with:
+
+- Python >= 3.11
+- standard library XML parser
+- `pytest` for tests
+- `ruff` and `mypy` for development
+
+Add later only if necessary:
+
+- `pandas` for DataFrame helpers
+- `lxml` if comments, processing instructions, namespaces, or exact formatting become required
+- `numpy` only if grid array conversion is added
+
+Avoid in the base package:
+
+- `torch`
+- `mrcfile`
+- `starfile`
+- `torch-tilt-series`
+- reconstruction packages
+
+## 15. Implementation milestones
+
+### Milestone 0: repository/bootstrap
+
+> **Status (2026-09-14):** Mostly done. Editable install, ruff and mypy never ran (no PyPI on the HPC); no CI; not generated from the TeamTomo template. See sections 0.3, 0.7 and 0.8.
+
+Goal:
+
+Create the separate repository and package skeleton.
+
+Tasks:
+
+- Create `teamtomo/xmlfile` or local fork equivalent.
+- Use the TeamTomo-preferred Python packaging template if maintainers provide one.
+- Use BSD 3-Clause License.
+- Add minimal README.
+- Add `pyproject.toml` with test/dev tooling.
+- Add `py.typed` if type hints are included.
+
+Validation:
+
+```bash
+python -m pip install -e .[test]
+pytest
+```
+
+### Milestone 1: generic ordered XML object model
+
+> **Status (2026-09-14):** Done, validated on `TS_1.xml` and 201 local files, byte-exact.
+
+Goal:
+
+Read and write XML without losing structure.
+
+Tasks:
+
+- Implement `XmlDeclaration`.
+- Implement `XmlElement`.
+- Implement `XmlDocument`.
+- Implement `XmlParser`.
+- Implement `XmlWriter`.
+- Implement `read`, `write`, `to_string`, and optionally `from_string`.
+
+Validation:
+
+- `TS_0.xml` read test passes.
+- `TS_0.xml` semantic round-trip passes.
+- `TS_069.xml` read test passes.
+- `TS_069.xml` semantic round-trip passes.
+
+### Milestone 2: helper utilities for common XML patterns
+
+> **Status (2026-09-14):** Not started; in scope for v0.0.1.
+
+Goal:
+
+Add safe utilities without changing the core object model.
+
+Tasks:
+
+- Add `text_to_list`.
+- Add `params_to_dict` or `params_to_pairs`.
+- Add `grid_to_dataframe` if `pandas` is accepted as a dependency.
+- Add `parse_pair_series`.
+
+Validation:
+
+- All helper-specific tests pass on both fixtures.
+- Helper failures raise clear errors.
+
+### Milestone 3: Warp tilt-series adapter
+
+> **Superseded (2026-09-14):** Dropped from xmlfile v0.0.1 (decision 6). See section 0.
+
+Goal:
+
+Provide convenient structured access to Warp-style tilt-series XML metadata.
+
+Tasks:
+
+- Add `xmlfile.adapters.warp`.
+- Add `is_warp_tilt_series_xml`.
+- Add `tilt_table`.
+- Add `ctf_parameters`.
+- Add `options_ctf_parameters`.
+- Add `grid_summary` or `grids`.
+
+Validation:
+
+- `tilt_table(TS_0)` returns 31 rows.
+- `tilt_table(TS_069)` returns 36 rows.
+- CTF parameter extraction preserves all names/values.
+- Grid summaries match fixture counts.
+
+### Milestone 4: optional downstream integration
+
+Goal:
+
+Let `torch-tilt-series` consume XML metadata only when maintainers are ready.
+
+Potential location:
+
+```text
+torch-tilt-series/src/torch_tilt_series/io.py
+```
+
+Potential API:
+
+```python
+def from_warp_xml(xml_path, pixel_spacing=None, image_path=None, device="cpu"):
+    ...
+```
+
+Important:
+
+This is not part of the first `xmlfile` PR.
+
+## 16. Proposed first PR scope
+
+> **Superseded (2026-09-14):** No PR is planned against the monorepo: TeamTomo creates a separate repo for I/O packages, requested via Zulip. v0.0.1 is expected to include the M2 helpers (decision 6). See section 0.
+
+Keep the first PR narrow:
+
+```text
+Add generic ordered XML read/write round-trip support
+```
+
+Included:
+
+- `XmlDeclaration`
+- `XmlElement`
+- `XmlDocument`
+- `XmlParser`
+- `XmlWriter`
+- `read`
+- `write`
+- `to_string`
+- `from_string` if useful for tests
+- fixtures, possibly anonymized
+- read and round-trip tests
+
+Excluded:
+
+- DataFrame helpers
+- Warp adapter
+- `torch-tilt-series` integration
+- grid reshaping
+- pixel-size inference
+- alignment conversion
+- reconstruction functionality
+
+## 17. Proposed first README outline
+
+```markdown
+# xmlfile
+
+Read and write XML metadata files in Python.
+
+`xmlfile` is a lightweight TeamTomo-style I/O package modeled after `starfile`.
+It provides a small API for reading XML into passive ordered Python objects and
+writing those objects back to XML.
+
+## Installation
+
+```bash
+pip install xmlfile
+```
+
+## Quickstart
+
+```python
+import xmlfile
+
+doc = xmlfile.read("TS_069.xml")
+xmlfile.write(doc, "copy.xml")
+text = xmlfile.to_string(doc)
+```
+
+## Design
+
+The core parser preserves XML structure. It does not interpret cryo-ET metadata,
+compute alignment models, or perform scientific conversion.
+```
+
+## 18. Suggested coding sequence
+
+> **Superseded (2026-09-14):** Steps 1–8 are done (with `TS_1.xml` as the fixture). In step 9, only pytest has run; ruff and mypy have not. See section 0.
+
+1. Create repo skeleton.
+2. Add `models.py` with dataclasses and equality tests.
+3. Add `parser.py` with file/from-string parsing.
+4. Add `writer.py` with string serialization.
+5. Add `functions.py` top-level wrappers.
+6. Add `__init__.py` exports.
+7. Add `TS_0.xml` fixture and tests.
+8. Add `TS_069.xml` fixture and tests.
+9. Run `ruff`, `mypy`, and `pytest`.
+10. Only then start helper functions.
+
+## 19. Open questions for maintainers
+
+> **Superseded (2026-09-14):** All seven have been answered by the author (section 0.5). The remaining open decisions are in section 0.8. Maintainers can still weigh in on the Zulip proposal. See section 0.
+
+These should not block Milestone 1, but should be confirmed before public release:
+
+1. Should the public package name be exactly `xmlfile`?
+2. Are the example XML fixtures approved for public test data, or should paths/metadata be anonymized?
+3. Is standard-library `xml.etree.ElementTree` acceptable for the first version?
+4. Do maintainers want byte-for-byte formatting preservation eventually, or is semantic round-trip preservation enough?
+5. Should `pandas` be a core dependency or an optional dependency for helper functions?
+6. Should Warp-specific adapters live in `xmlfile.adapters.warp` or downstream in `torch-tilt-series` only?
+7. Should writing default to refusing overwrites?
+
+## 20. Recommended immediate next task
+
+> **Superseded (2026-09-14):** Milestone 1 is done. The next steps are in section 0.9. See section 0.
+
+Implement Milestone 1 only.
+
+Success criterion:
+
+```python
+import xmlfile
+
+doc = xmlfile.read("tests/data/TS_0.xml")
+copy = xmlfile.from_string(xmlfile.to_string(doc))
+assert copy == doc
+
+doc = xmlfile.read("tests/data/TS_069.xml")
+copy = xmlfile.from_string(xmlfile.to_string(doc))
+assert copy == doc
+```
+
+Once that passes, the project has a safe foundation. Every future feature can be added without risking silent metadata loss.
