@@ -3,6 +3,17 @@
 from __future__ import annotations
 
 from .functions import from_string, read, to_string, write
+from .helpers import (
+    array_to_grid,
+    grid_margins,
+    grid_to_array,
+    list_to_text,
+    pair_series_to_text,
+    params_to_dict,
+    params_to_pairs,
+    parse_pair_series,
+    text_to_list,
+)
 from .models import XmlDeclaration, XmlDocument, XmlElement
 from .parser import XmlLossyContentWarning, XmlParseError
 
@@ -12,8 +23,17 @@ __all__ = [
     "XmlElement",
     "XmlLossyContentWarning",
     "XmlParseError",
+    "array_to_grid",
     "from_string",
+    "grid_margins",
+    "grid_to_array",
+    "list_to_text",
+    "pair_series_to_text",
+    "params_to_dict",
+    "params_to_pairs",
+    "parse_pair_series",
     "read",
+    "text_to_list",
     "to_string",
     "write",
 ]

@@ -105,6 +105,40 @@ xmlfile.write(doc, "TS_1.xml")
 
 Pass `overwrite=False` to refuse instead.
 
+## Helpers
+
+The core never converts values. These functions do, for the patterns that
+recur in cryo-ET metadata XML (numpy is the only dependency):
+
+```python
+angles = xmlfile.text_to_list(root.find("Angles"), float)     # whitespace-separated text
+used   = xmlfile.text_to_list(root.find("UseTilt"), bool)     # "True"/"False" only
+params = xmlfile.params_to_dict(root.find("CTF"))             # {Name: Value} of <Param/> children
+grid   = xmlfile.grid_to_array(root.find("GridMovementX"))    # float32, shape (Depth, Height, Width)
+series = xmlfile.parse_pair_series(root.find("TiltPS1D"))     # (n, 2) from "x|y;x|y;..."
+```
+
+A 4-D grid (an element with a `Duration` attribute) gives shape
+`(Duration, Depth, Height, Width)`; `grid.ravel()` lists the nodes with `X`
+varying fastest, the order in the file. `grid_margins` returns the
+`MarginX/Y/Z[/W]` attributes.
+
+Each reader has a writer: `list_to_text`, `array_to_grid` and
+`pair_series_to_text`. Passing the element being replaced as `template` keeps
+the document's indentation, so an edit changes only the values:
+
+```python
+old = root.find("GridMovementX")
+new = xmlfile.array_to_grid(values, old.tag, margins=xmlfile.grid_margins(old), template=old)
+root.children[root.children.index(old)] = new
+xmlfile.write(doc, "edited.xml")
+```
+
+Numbers are written with `value_format`. The default, `"float32"`, is the
+shortest text that round-trips the value as a 32-bit float in the .NET style
+(`2.5221846`, `1E-07`, `0`); values read from a Warp file are reproduced byte
+for byte. A `%`/`{}` format string or a callable can be given instead.
+
 ## Implementation notes
 
 The parser drives `xml.parsers.expat` directly rather than using

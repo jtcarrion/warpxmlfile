@@ -23,6 +23,16 @@ def test_corpus_round_trips_byte_exactly(corpus_paths):
                 doc = xmlfile.read(path)
             if xmlfile.to_string(doc) != path.read_text(encoding="utf-8"):
                 failures.append(f"{path.name}: not byte-exact")
+            for element in doc.root:
+                if element.tag.startswith("Grid"):
+                    rebuilt = xmlfile.array_to_grid(
+                        xmlfile.grid_to_array(element),
+                        element.tag,
+                        margins=xmlfile.grid_margins(element),
+                        template=element,
+                    )
+                    if rebuilt != element:
+                        failures.append(f"{path.name}: {element.tag} not reproduced")
         except Exception as error:
             failures.append(f"{path.name}: {type(error).__name__}: {error}")
 

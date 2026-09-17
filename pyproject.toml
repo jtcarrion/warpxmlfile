@@ -40,7 +40,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 # add your package dependencies here
-dependencies = []
+dependencies = ["numpy"]
 
 [project.urls]
 homepage = "https://github.com/teamtomo/xmlfile"
