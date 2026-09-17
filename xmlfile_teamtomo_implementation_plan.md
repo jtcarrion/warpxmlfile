@@ -2,7 +2,7 @@
 
 Prepared for developing a small TeamTomo-style XML I/O package modeled after `starfile`.
 
-## 0. Current status and handoff (updated 2026-09-14)
+## 0. Current status and handoff (updated 2026-09-17)
 
 > Read this section first. It is self-contained and supersedes anything below
 > that conflicts with it. Sections 1–20 are the original plan (2026-09-09),
@@ -13,11 +13,14 @@ Prepared for developing a small TeamTomo-style XML I/O package modeled after `st
 | Item | Location / state |
 | --- | --- |
 | Repository (HPC) | `/orcd/data/mbathe/001/jcarrion/software/xmlfile` |
+| Repository (laptop) | `~/Desktop/particle_picker/code/xmlfile`, clone of GitHub `main`; editable-installed into the `particle_picker` conda env (Python 3.10.14, `pip install -e . --ignore-requires-python`) — 77 passed, 1 skipped. |
 | Branch `main` | One commit, `0047f1e` "Add generic ordered XML read/write round-trip support". Clean tree. This is the branch that will eventually go to TeamTomo. |
-| Branch `notes` | Orphan branch (no shared history with `main`) holding only this plan. Keeps planning material out of `main` so it cannot be merged in by accident. |
+| Branch `notes` | Orphan branch (no shared history with `main`) holding only this plan (`6a71b8e`). Keeps planning material out of `main` so it cannot be merged in by accident. A working copy of the plan also sits (gitignored) at the root of the `particle_picker` repo; the `notes` branch is canonical — push the same file to both. |
 | This plan on `main` | Gitignored on purpose. |
-| GitHub | **Not pushed yet.** The private repo `jtcarrion/xmlfile` must be created (empty: no README, license or .gitignore), then `main` and `notes` pushed. |
+| GitHub | **Pushed.** Private repo `jtcarrion/xmlfile`, `origin/main` = `0047f1e`, `origin/notes` = `6a71b8e`. |
+| PyPI | `xmlfile` is **not taken** (checked 2026-09-17; `warpxml`, `warpfile` also free). |
 | TeamTomo | Nothing submitted. No Zulip post yet. `teamtomo/xmlfile` does not exist. |
+| Consumer | `particle_picker` (branch `feature/local-alignment-ba`) plans to use xmlfile for its G3 step: write a per-tilt 3×3 local-alignment grid into an existing Warp XML in place (`local_alignment_BA.md` §7/§8). No code there calls xmlfile yet; Warp XML is currently read through the vendored `warpylib` (lxml). |
 
 ### 0.2 Picking this up on a new machine
 
@@ -32,15 +35,16 @@ pip install pytest                 # enough: pyproject sets pythonpath = ["src"]
 pytest                             # expect: 77 passed, 1 skipped
 ```
 
-`pip install -e ".[test]"` has **never been verified**: the HPC cannot reach
-PyPI, so hatchling/hatch-vcs could not be fetched. Try it first on the new
-machine. The skipped test is the corpus test, which needs local data (see 0.9).
+`pip install -e .` **is verified** on the laptop (Python 3.10, needs
+`--ignore-requires-python` until the floor is lowered in step 2 below; hatchling
+and hatch-vcs come from PyPI, which the laptop can reach). The skipped test is the
+corpus test, which needs local data (see 0.10).
 
 ### 0.3 Milestone status
 
 | Milestone | Status |
 | --- | --- |
-| M0 bootstrap | **Mostly done.** Package skeleton, BSD-3 LICENSE, README, pyproject, `py.typed`, `.gitattributes`. Gaps: editable install unverified; **ruff and mypy never run**; no CI; not generated from the TeamTomo template (see 0.8, decision A). |
+| M0 bootstrap | **Mostly done.** Package skeleton, BSD-3 LICENSE, README, pyproject, `py.typed`, `.gitattributes`, editable install verified. Gaps: **ruff and mypy never run**; no CI; pyproject not yet aligned with the TeamTomo/alnfile conventions (step 2 of 0.9). |
 | M1 ordered XML core | **Done.** 77 tests pass; byte-exact round trip on the fixture and on 201 local Warp files. |
 | M2 helpers | **Not started.** Now in scope for v0.0.1 (decision 6). Should be designed against torch-tilt-series needs (0.6). |
 | M3 Warp adapter in xmlfile | **Dropped** for v0.0.1 (decision 6). |
@@ -101,13 +105,17 @@ garbage-collected, so they are **not** in `main`'s history.
 
 ### 0.5 Decisions made (answers to section 19)
 
-1. **Name:** keep `xmlfile`. PyPI availability not checked (PyPI unreachable from the HPC); check before release.
+1. **Name:** keep `xmlfile`. PyPI name is free (checked 2026-09-17).
 2. **Fixtures:** commit one file only (`TS_1.xml`, public EMPIAR provenance, most complete available). Other XML stays local and is validated with `pytest --xml-corpus DIR`.
 3. **Parser:** standard library yes, `ElementTree` no. ElementTree rewrites `<w:b>` to `{uri}b` and silently deletes the `xmlns:w` attribute, so the parser drives `expat` directly. No lxml.
 4. **Fidelity:** byte-exact by default; pretty-printing opt-in. Only comments/PIs lose content. Closing the cosmetic gaps would need a custom lexer and is not planned; comment/PI node types could be added if a real file needs them. Property-based tests (`hypothesis`) are an option for stronger guarantees.
-5. **pandas:** acceptable as a dependency (TeamTomo I/O packages such as alnfile already depend on it).
+5. **pandas:** acceptable as a dependency (TeamTomo I/O packages such as alnfile already depend on it). **Revised 2026-09-17:** v0.0.1 helpers return NumPy arrays (numpy becomes the only runtime dependency); pandas stays out until a DataFrame-shaped helper is actually needed.
 6. **Scope of v0.0.1:** a robust reader/writer plus helper functions. No Warp-specific adapter in xmlfile. Downstream goal: a loader in torch-tilt-series that uses the XML data.
 7. **Overwrite:** `write` overwrites by default, like starfile and mdocfile. This supports editing ("perturbing") alignments and rerunning torch-tilt-series.
+8. **Python floor: 3.10** (2026-09-17). alnfile's floor; the code uses nothing from 3.11; the main consumer env is 3.10.
+9. **Template (open decision A): hand-align** `pyproject.toml` / pre-commit / CI to alnfile (`b582488`) rather than regenerate with copier. Test data stays in `tests/data/` (open decision D).
+10. **Helper design (open decision C):** generic, Warp-agnostic names — `text_to_list`, `params_to_dict` / `params_to_pairs`, `grid_to_array` / `array_to_grid` (a `NodeGrid(values, margins)` dataclass; `values` in zyx / C order `(Depth, Height, Width)` or `(Duration, Depth, Height, Width)`, identical to warpylib's flat node order `((w·D + z)·H + y)·W + x`), `parse_pair_series`. Strict validation (node count, missing/duplicate nodes raise). `array_to_grid` takes a `template` element so an in-place replacement keeps the file's indentation. Warp-specific interpretation (`from_warp_xml`, signs, frames) stays downstream in torch-tilt-series (decision 6).
+11. **Branching:** one branch per step (`chore/teamtomo-conventions`, `feat/helpers`) merged into `main`; commits carry the `Co-Authored-By: Claude …` trailer.
 
 ### 0.6 Research findings (2026-09-10)
 
@@ -135,9 +143,19 @@ with pydocstyle numpy convention; mypy `strict = true` with
 `disallow_any_generics = false`, `disallow_subclassing_any = false`;
 pytest `filterwarnings = ["error"]`; coverage and check-manifest config.
 
-**What torch-tilt-series needs.** `torch_tilt_series/io.py` has
+**What torch-tilt-series needs (re-checked 2026-09-17 against monorepo
+`a15f012` = PyPI 0.6.0, released 2026-09-11).** `torch_tilt_series/io.py` has
 `from_aretomo_output(aln_path, pixel_spacing, image_path=None, device="cpu")`
-built on alnfile. A `from_warp_xml` built on xmlfile would follow the same pattern.
+and `from_etomo_directory(etomo_dir, pixel_spacing, device)` (both import their
+I/O package lazily; `io` extra = `alnfile, etomofiles, mrcfile`), plus
+`load_tilt_series_images`. A `from_warp_xml(xml_path, image_path=None, device)`
+built on xmlfile would follow the same pattern. `TiltSeries.__init__` now also
+takes `x_tilts`, `sample2levelled`, `levelled2tomo`, **`local_shifts`** (sample
+space, 3D) and **`local_shifts_2d`** (`Callable[(n_points, n_tilts, 2|4) Å,
+detector-centred] -> same`, applied per tilt *after* projection) — i.e. the hook
+for Warp's `GridMovementX/Y` already exists. All coordinates are zyx/yx, Å,
+centre-origin. Nothing in the monorepo reads XML or Warp files; pre-commit
+(ruff, mypy, typos, validate-pyproject) is enforced in CI since 2026-09-11.
 Mapping from `TiltSeries.__init__` to Warp XML:
 
 | TiltSeries parameter | Warp XML source | Confidence |
@@ -149,13 +167,27 @@ Mapping from `TiltSeries.__init__` to Warp XML:
 | `image_indices` | `<UseTilt>` | direct |
 | `image_path` | `<MoviePath>` (relative paths) | direct |
 | `x_tilts`, `sample2levelled` | `PlaneNormal`, `LevelAngleX/Y` (some workflows) | needs work |
-| `local_shifts`, `local_shifts_2d` (`Callable[[Tensor], Tensor]`) | `GridMovementX/Y`, `GridVolumeWarpX/Y/Z` | needs work; this is where the dense grids go |
+| `local_shifts_2d` (`Callable[[Tensor], Tensor]`) | `GridMovementX/Y` (per tilt; Warp samples at the *pre-movement* position, normalised by `ImageDimensionsAngstrom`, t = tilt/(T−1) over **all** tilts, and **subtracts**) | closure over the grids + image dims + pixel size; must map used tilts back to Warp rows when `UseTilt` has `False` entries |
+| `local_shifts` (3D, sample space) | `GridVolumeWarpX/Y/Z` (4D: x, y, z, dose/time) | later |
 
 The commit the user linked, `2c81e6b` (PR #126, Marten Chaillet, 2026-09-08),
 moved tilt-image loading and preprocessing from torch-reconstruct-tomogram into
 torch-tilt-series. That module is actively changing, so coordinate before
 building against it. The commit uses the same `Co-Authored-By: Claude …` /
 `Claude-Session:` trailer style as our commit.
+
+### 0.6.1 Empirical checks on Warp files (2026-09-17)
+
+On an M-refined bmp6 file (`TS_042.xml`, 36 tilts, `GridMovementX/Y` 6×4×36 =
+864 nodes, `GridVolumeWarp` 4D, 485,950 bytes): byte-exact round trip in
+0.02 s; editing one `Node Value` changes exactly one line; replacing
+`GridMovementX` with a hand-built 3×3×36 `XmlElement` serialises correctly with
+the file's tab indentation carried by `tail`. What had to be done by hand —
+node ordering, per-node `tail` whitespace, float formatting (warpylib writes
+`.9g`; Warp writes C# shortest-round-trip, e.g. `-4.46617`) — is exactly the
+M2 helper scope. The EMPIAR `00254.xml` (etomo import, no M) has only 1×1×1
+grids; the TS_1 fixture has `GridVolumeWarp` with `Depth="1" Duration="41"`,
+bmp6 has `Depth="4" Duration="10"` — helpers must handle both 3D and 4D.
 
 ### 0.7 Known issues and suspicions (unverified)
 
@@ -167,26 +199,21 @@ building against it. The commit uses the same `Co-Authored-By: Claude …` /
 
 ### 0.8 Open decisions
 
-- **A. Template:** regenerate the repo from `pyrepo-copier` (recommended: looks native to TeamTomo reviewers, includes CI, pre-commit and mkdocs) and port `src/` and `tests/` in, **or** hand-align the current pyproject.
-- **B. Python floor:** 3.10 (alnfile) or 3.11 (current, monorepo skel). The code does not need 3.11.
-- **C. Helper design:** design M2 helpers backwards from the TiltSeries mapping in 0.6 (recommended), rather than only from section 11's generic list. The grid helper's output shape is the main question (DataFrame vs. something convertible into a `LocalShiftFn`).
-- **D. Test data location:** `tests/data/` (current) or `test_data/` (alnfile).
-- **E. Release/version:** when to tag `v0.0.1`.
-- **F. `AxisOffsetX/Y` units and sign:** needs Warp documentation or a maintainer.
+- ~~A. Template~~ → decided: hand-align (0.5 #9).
+- ~~B. Python floor~~ → decided: 3.10 (0.5 #8).
+- ~~C. Helper design~~ → decided: NumPy arrays, generic names (0.5 #10).
+- ~~D. Test data location~~ → decided: keep `tests/data/` (0.5 #9).
+- **E. Release/version:** when to tag `v0.0.1` (after steps 2–4 below).
+- **F. `AxisOffsetX/Y` units and sign** (and the y/x order, the sign of the in-plane rotation, the grid sign/frame, and all-vs-used tilts): to be settled **numerically** (step 4 below) against warpylib's `get_position_in_all_tilts`, not by documentation.
 
 ### 0.9 Next steps, in order
 
-1. Create the private GitHub repo `jtcarrion/xmlfile` (empty) and push both branches:
-   ```bash
-   cd /orcd/data/mbathe/001/jcarrion/software/xmlfile
-   git remote add origin git@github.com:jtcarrion/xmlfile.git
-   git push -u origin main
-   git push origin notes
-   ```
-2. Decide A and B; regenerate from the template or align by hand; add CI; get `pip install -e`, ruff, mypy and pytest green on 3.10/3.11–3.13 × 3 OSes.
-3. Decide C; build M2 helpers (pandas allowed) with tests.
-4. Post the proposal on the TeamTomo Zulip, including the open questions.
-5. Later: `from_warp_xml` in torch-tilt-series.
+1. ~~Create the GitHub repo and push~~ — done (0.1). This plan updated 2026-09-17 (step 1 of the 2026-09-17 agreement).
+2. **Conventions** (branch `chore/teamtomo-conventions`): `requires-python >=3.10`; `[dependency-groups]`; ruff/mypy/pytest (`filterwarnings = ["error"]`)/coverage/check-manifest/typos blocks from alnfile; `.pre-commit-config.yaml`; alnfile's `.github/workflows/ci.yml` (incl. the trusted-publishing job, inert until a `v*` tag); numpy-style docstrings; explicit typed keyword parameters for `to_string`/`write` (same keyword names); tests using `pytest.warns` for the lossy-content warning. Run ruff, ruff-format and mypy in a `uv sync --group dev` venv until green.
+3. **M2 helpers** (branch `feat/helpers`, `src/xmlfile/helpers.py`), design per 0.5 #10; tests on `TS_1.xml` (984-node 3D grids, 4D grids, 41 tilts, CTF/OptionsCTF params, `TiltPS1D`), array→grid→array identity, in-place replacement round trip, error cases; `--xml-corpus` on the bmp6 directory locally. This is the same implementation that `particle_picker` G3 will call.
+4. **Numerical proof of the Warp ↔ torch-tilt-series mapping**, in `particle_picker` (`scripts/verify_warp_xml_mapping.py`, results in `tests/baselines/local_alignment_ba/G3/warp_xml_mapping.md`), in a separate `uv venv --python 3.12` with `torch-tilt-series==0.6.0`, `lxml`, `starfile`, `pandas`, xmlfile editable: (i) xmlfile arrays == warpylib `CubicGrid.values` on `TS_042.xml`; (ii) hand-built `TiltSeries(..., local_shifts_2d=closure)` vs warpylib `get_position_in_all_tilts` on random points, enumerating the sign / order / frame hypotheses, target < 0.05 px; (iii) the G3 path: `array_to_grid` a 3×3×41 field into `00254.xml`, write, re-read with warpylib, evaluate; (iv) a synthetic `UseTilt`-False case.
+5. Post the proposal on the TeamTomo Zulip (I/O packages get their own `teamtomo/xmlfile` repo — `CONTRIBUTING.md`), with the results of 4 as evidence.
+6. Later: `from_warp_xml` in torch-tilt-series (monorepo PR, `io` extra gains `xmlfile`).
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
@@ -198,6 +225,7 @@ building against it. The commit uses the same `Co-Authored-By: Claude …` /
 - `xmlfile/.venv`: Python 3.12 with pytest. In non-interactive shells run
   `source /usr/share/lmod/lmod/init/bash && module load miniforge/25.11.0-0` first.
 - Network from the HPC: GitHub works (SSH authenticates as `jtcarrion`); PyPI is blocked.
+- Laptop-only: `particle_picker/data/bmp6/WARP_DEV_TEST/TS_0{34,41,42,53,61,63,65,88,91}.xml` (M-refined, 6×4×T grids, unpublished) and `data/EMPIAR-10499/etomo_patches_test/00254.xml`; the monorepo checkout used for 0.6 lives in the session scratchpad (`teamtomo/`, `alnfile/`), not in any repo.
 
 ---
 
