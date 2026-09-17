@@ -7,8 +7,8 @@ with XML lexical concerns: escaping, and classifying whitespace-only text.
 from __future__ import annotations
 
 __all__ = [
-    "escape_text",
     "escape_attribute",
+    "escape_text",
     "is_insignificant_whitespace",
 ]
 

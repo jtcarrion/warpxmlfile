@@ -57,9 +57,9 @@ def test_round_trip_preserves_repeated_element_order(xml_path):
 
 def test_round_trip_preserves_grid_node_order(xml_path):
     original = xmlfile.read(xml_path).root.find("GridMovementX")
-    copy = xmlfile.from_string(
-        xmlfile.to_string(xmlfile.read(xml_path))
-    ).root.find("GridMovementX")
+    copy = xmlfile.from_string(xmlfile.to_string(xmlfile.read(xml_path))).root.find(
+        "GridMovementX"
+    )
     assert [n.attributes for n in copy.children] == [
         n.attributes for n in original.children
     ]

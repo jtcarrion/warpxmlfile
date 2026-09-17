@@ -1,58 +1,148 @@
+# https://peps.python.org/pep-0517/
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
+# https://hatch.pypa.io/latest/config/metadata/
+[tool.hatch.version]
+source = "vcs"
+
+# read more about configuring hatch at:
+# https://hatch.pypa.io/latest/config/build/
+[tool.hatch.build.targets.wheel]
+only-include = ["src"]
+sources = ["src"]
+
+# https://peps.python.org/pep-0621/
 [project]
 name = "xmlfile"
+dynamic = ["version"]
 description = "Read and write XML metadata files in Python."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
-authors = [{ name = "TeamTomo" }]
+authors = [{ name = "Jackson Carrion", email = "jcarrion@mit.edu" }]
 keywords = ["xml", "cryo-em", "cryo-et", "metadata", "io"]
+# https://pypi.org/classifiers/
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
+# add your package dependencies here
 dependencies = []
-dynamic = ["version"]
-
-[project.optional-dependencies]
-test = ["pytest", "pytest-cov"]
-dev = ["xmlfile[test]", "ruff", "mypy"]
 
 [project.urls]
-Homepage = "https://github.com/teamtomo/xmlfile"
-Source = "https://github.com/teamtomo/xmlfile"
+homepage = "https://github.com/teamtomo/xmlfile"
+repository = "https://github.com/teamtomo/xmlfile"
+documentation = "https://github.com/teamtomo/xmlfile#readme"
+changelog = "https://github.com/teamtomo/xmlfile#changelog"
+"Bug Tracker" = "https://github.com/teamtomo/xmlfile/issues"
+"Source Code" = "https://github.com/teamtomo/xmlfile"
 
-[tool.hatch.version]
-source = "vcs"
+# https://peps.python.org/pep-0735/
+# setup with `uv sync` or `pip install -e . --group dev`
+[dependency-groups]
+test = ["pytest", "pytest-cov"]
+dev = [
+    { include-group = "test" },
+    "ipython",
+    "mypy",
+    "pdbpp",  # https://github.com/pdbpp/pdbpp
+    "pre-commit-uv",
+    "rich",  # https://github.com/Textualize/rich
+    "ruff",
+]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/xmlfile"]
-
-[tool.pytest.ini_options]
-minversion = "7.0"
-testpaths = ["tests"]
-pythonpath = ["src"]
-addopts = "-ra"
-
+# https://docs.astral.sh/ruff
 [tool.ruff]
 line-length = 88
-src = ["src", "tests"]
+target-version = "py310"
+src = ["src"]
+fix = true
+# unsafe-fixes = true
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "RUF"]
+pydocstyle = { convention = "numpy" }
+select = [
+    "E",    # style errors
+    "W",    # style warnings
+    "F",    # flakes
+    "D",    # pydocstyle
+    "D417", # Missing argument descriptions in Docstrings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "C4",   # flake8-comprehensions
+    "B",    # flake8-bugbear
+    "A001", # flake8-builtins
+    "RUF",  # ruff-specific rules
+    "TC",   # flake8-type-checking
+    "TID",  # flake8-tidy-imports
+]
+ignore = [
+    "D401", # First line should be in imperative mood (remove to opt in)
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["B011"]
+"tests/*.py" = ["D", "S"]
+"docs/*.py" = ["D", "A"]
 
+# https://docs.astral.sh/ruff/formatter/
+[tool.ruff.format]
+docstring-code-format = true
+skip-magic-trailing-comma = false  # default is false
+
+# https://docs.pytest.org/
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = ["--color=yes"]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["error"]
+
+# https://mypy.readthedocs.io/en/stable/config_file.html
 [tool.mypy]
-python_version = "3.11"
-files = "src/xmlfile"
+files = "src"
 strict = true
+disallow_any_generics = false
+disallow_subclassing_any = false
+show_error_codes = true
+pretty = true
+
+# https://coverage.readthedocs.io/
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "@overload",
+    "except ImportError",
+    "raise AssertionError",
+    "\\.\\.\\.",
+    "raise NotImplementedError()",
+    "pass",
+]
+
+[tool.coverage.run]
+source = ["xmlfile"]
+
+# https://github.com/mgedmin/check-manifest#configuration
+# add files that you want check-manifest to explicitly ignore here
+# (files that are in the repo but shouldn't go in the package)
+[tool.check-manifest]
+ignore = [
+    ".pre-commit-config.yaml",
+    ".ruff_cache/**/*",
+    "tests/**/*",
+    "uv.lock",
+]
+
+# https://github.com/crate-ci/typos/blob/master/docs/reference.md
+[tool.typos.default]
+extend-ignore-identifiers-re = []

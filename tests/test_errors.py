@@ -39,8 +39,8 @@ def test_parse_error_is_a_value_error():
 
 
 def test_write_needs_a_filename():
-    from xmlfile.writer import XmlWriter
     from xmlfile.models import XmlDocument, XmlElement
+    from xmlfile.writer import XmlWriter
 
     with pytest.raises(ValueError):
         XmlWriter(XmlDocument(root=XmlElement("a"))).write()
