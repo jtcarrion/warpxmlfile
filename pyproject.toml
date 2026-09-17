@@ -12,6 +12,10 @@ source = "vcs"
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]
 sources = ["src"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 
 # https://peps.python.org/pep-0621/
 [project]
