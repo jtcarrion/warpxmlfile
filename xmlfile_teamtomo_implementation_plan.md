@@ -326,7 +326,43 @@ b_t` is probed from `project_points`) → reprojected.
   `overlay_00254.png`: views 0 / 20 / 40 — observed circles sit on the gold
   beads, baseline `+` coincides, perturbed markers are displaced by 1–3 px.
 
-#### 0.11.6 What this means for the next steps
+#### 0.11.6 Phase E/F — the real loader, end to end through torch-reconstruct-tomogram (done)
+
+`from_warp_xml` (uncommitted, branch `feat/warp-xml-loader`; 0.12) on real data
+(`scripts/phase_e_loader.py`): `00254.xml` global 0.0001 px vs warpylib with no
+warning; phase-C 3×3 file and M-refined `TS_042.xml` warn without a callable
+and give 0.0002 px with the validated closure passed as `local_shifts_2d`.
+
+Full workflow (`scripts/phase_f_workflow.py`, `phase_f_compare.py`,
+`phase_f_metrics.py`): `from_warp_xml(00254.xml, image_path=00254.st)` →
+`ts.pixel_spacing = 10.0` (the local stack is 10 Å/px; the XML `PixelSize` is
+the 1.7 Å raw-frame pixel — see API note in 0.12) → `load_tilt_series_images`
+→ `torch_reconstruct_tomogram.reconstruct_tomogram(volume_shape=(340, 630,
+652), sidelength=128)` — same shape/pixel as the existing IMOD/AreTomo/JOLT
+tomograms of this series. 150 s per volume on 8 CPU threads. The
+reconstruction places every patch with `tilt_series.project_points`, so
+`local_shifts_2d` **is honoured** (per patch centre) in reconstruction too.
+
+Result: the volume is **slice-for-slice in the same frame as IMOD's
+`etomo_fids.mrc`** (same z index, same xy; `slices_baseline_vs_etomo.png`),
+and the 17 IMOD beads reconstruct as round dark discs exactly at the voxels
+predicted from the phase-D bead fit (`bead_crops.png`, with perturbed
+variants for comparison). Per-bead metrics (`bead_metrics.json`):
+
+| volume | disc contrast (r ≤ 4 vs 6–8, / volume std) | correlation of the 17-px bead crop with IMOD's (median / min) |
+| --- | --- | --- |
+| Warp XML → torch, baseline | 8.0 (min 6.2) | **0.883** / 0.779 |
+| … XML with `AxisOffset` ± 3 px per tilt | 4.4 | 0.635 |
+| … XML with an injected 3×3 grid, 3 px (via `local_shifts_2d`) | 6.4 | 0.797 |
+| IMOD `etomo_fids.mrc` (weighted back-projection, its own filters) | 13.9 | 1 |
+
+Sharpness degrades monotonically with the injected misalignment and the
+grid is demonstrably applied through the whole chain (XML → xmlfile →
+loader → projection → reconstruction). The absolute contrast difference to
+IMOD is the reconstruction method/filtering (Fourier slice insertion + DC-free
+bandpass vs. WBP), not alignment.
+
+#### 0.11.7 What this means for the next steps
 
 * No change to xmlfile was needed for any phase; the helpers and the
   byte-exact writer are sufficient for reading and editing Warp alignments.
@@ -338,6 +374,37 @@ b_t` is probed from `project_points`) → reprojected.
   **negated** (Warp subtracts), sampled at the pre-movement position, node
   t-axis = file tilt order; `AxisOffsetX/Y` in Å as (x, y) added after
   rotation; keep `AxisAngle` = the IMOD `.xf` rotation.
+
+### 0.12 `from_warp_xml` as written (uncommitted, 2026-09-17)
+
+`~/Software/teamtomo` branch `feat/warp-xml-loader`, four files, unstaged:
+`packages/primitives/torch-tilt-series/{src/torch_tilt_series/io.py,
+src/torch_tilt_series/__init__.py, pyproject.toml, tests/test_io.py}`.
+
+* `from_warp_xml(xml_path, image_path=None, local_shifts_2d=None,
+  device="cpu") -> TiltSeries`, same shape as the aretomo/etomo loaders, lazy
+  `import xmlfile`; parses `Angles`, `AxisAngle`, `AxisOffsetX/Y`, `UseTilt`,
+  CTF `PixelSize` with the xmlfile helpers; `sample_translations =
+  (AxisOffsetY, AxisOffsetX)` Å; drops `UseTilt=False` tilts and uses them as
+  `image_indices` (as the etomo loader drops excluded views);
+  `levelled2tomo` = z-flip; warns when `GridMovementX/Y` is non-zero and no
+  `local_shifts_2d` was given; `GridVolumeWarp` documented as ignored.
+* `__init__.py`: export + `TiltSeries.from_warp_xml` classmethod;
+  `pyproject.toml`: `xmlfile` in the `io` extra and `test` group; three tests
+  appended to `tests/test_io.py` on a synthetic XML (global fields,
+  `UseTilt=False` dropping, warning/callable).
+* Checks: package `pytest` 44 passed (41 + 3); ruff + ruff-format clean; mypy
+  adds three errors of the same kind the existing loaders already have
+  (numpy arrays passed to `TiltSeries(...)` typed as `Tensor`).
+* **API note to raise with the maintainers:** the aretomo/etomo loaders take
+  `pixel_spacing` as an argument (the pixel of the images at `image_path`);
+  `from_warp_xml` reads it from the XML, which is the raw-frame pixel, while
+  the tilt stack one reconstructs from is usually binned (10 Å here). Either
+  add a `pixel_spacing=None` override argument, or document setting
+  `ts.pixel_spacing` after loading. Undecided; the workflow script sets the
+  attribute.
+* Before an upstream PR: `uv lock` (new dependency), and `xmlfile` must be
+  installable from PyPI (or the maintainers' preferred source).
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
