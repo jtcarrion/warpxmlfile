@@ -48,7 +48,7 @@ corpus test, which needs local data (see 0.10).
 | M1 ordered XML core | **Done.** 77 tests pass; byte-exact round trip on the fixture and on 201 local Warp files. |
 | M2 helpers | **Done** (PR #2, on `main`): `text_to_list`/`list_to_text`, `params_to_pairs`/`params_to_dict`, `grid_to_array`/`grid_margins`/`array_to_grid`, `parse_pair_series`/`pair_series_to_text`; 100 tests; numpy the only dependency. |
 | M3 Warp adapter in xmlfile | **Dropped** for v0.0.1 (decision 6). |
-| M4 torch-tilt-series loader | **Mapping proven numerically (0.11); loader not yet written** — option 3 in 0.11.3. Branch `feat/warp-xml-loader` exists in `~/Software/teamtomo` (clean, at `origin/main` `2d9f20c`). |
+| M4 torch-tilt-series loader | **Mapping fully validated (0.11, phases A–D); loader not yet written** — option 3 in 0.11.3. Branch `feat/warp-xml-loader` exists in `~/Software/teamtomo` (clean, at `origin/main` `2d9f20c`). |
 
 ### 0.4 What is built on `main`
 
@@ -211,7 +211,7 @@ bmp6 has `Depth="4" Duration="10"` — helpers must handle both 3D and 4D.
 1. ~~Create the GitHub repo and push~~ — done (0.1). This plan updated 2026-09-17 (step 1 of the 2026-09-17 agreement).
 2. ~~Conventions~~ — done, PR #1 merged (`988a3c7`). Was: `requires-python >=3.10`; `[dependency-groups]`; ruff/mypy/pytest (`filterwarnings = ["error"]`)/coverage/check-manifest/typos blocks from alnfile; `.pre-commit-config.yaml`; alnfile's `.github/workflows/ci.yml` (incl. the trusted-publishing job, inert until a `v*` tag); numpy-style docstrings; explicit typed keyword parameters for `to_string`/`write` (same keyword names); tests using `pytest.warns` for the lossy-content warning. Run ruff, ruff-format and mypy in a `uv sync --group dev` venv until green.
 3. ~~M2 helpers~~ — done, PR #2 merged. Was: (branch `feat/helpers`, `src/xmlfile/helpers.py`), design per 0.5 #10; tests on `TS_1.xml` (984-node 3D grids, 4D grids, 41 tilts, CTF/OptionsCTF params, `TiltPS1D`), array→grid→array identity, in-place replacement round trip, error cases; `--xml-corpus` on the bmp6 directory locally. This is the same implementation that `particle_picker` G3 will call.
-4. **Numerical proof of the Warp ↔ torch-tilt-series mapping** — phases A/B done, C/D in progress; see **0.11** (revised 2026-09-17: lives in `~/Software/xmlfile-validation/`, not in `particle_picker`, against the monorepo clone `~/Software/teamtomo`). Original wording: (i) xmlfile arrays == warpylib `CubicGrid.values` on `TS_042.xml`; (ii) hand-built `TiltSeries(..., local_shifts_2d=closure)` vs warpylib `get_position_in_all_tilts` on random points, enumerating the sign / order / frame hypotheses, target < 0.05 px; (iii) the G3 path: `array_to_grid` a 3×3×41 field into `00254.xml`, write, re-read with warpylib, evaluate; (iv) a synthetic `UseTilt`-False case.
+4. ~~Numerical proof of the Warp ↔ torch-tilt-series mapping~~ — **done, phases A–D**; see **0.11** (revised 2026-09-17: lives in `~/Software/xmlfile-validation/`, not in `particle_picker`, against the monorepo clone `~/Software/teamtomo`). Original wording: (i) xmlfile arrays == warpylib `CubicGrid.values` on `TS_042.xml`; (ii) hand-built `TiltSeries(..., local_shifts_2d=closure)` vs warpylib `get_position_in_all_tilts` on random points, enumerating the sign / order / frame hypotheses, target < 0.05 px; (iii) the G3 path: `array_to_grid` a 3×3×41 field into `00254.xml`, write, re-read with warpylib, evaluate; (iv) a synthetic `UseTilt`-False case.
 5. `from_warp_xml` in torch-tilt-series, **option 3 of 0.11.3** (global-only loader first), on branch `feat/warp-xml-loader` of `~/Software/teamtomo`; tests appended to the package's existing `tests/test_io.py` (synthetic XML in `tmp_path`, no lab data). Only after phases C/D are complete.
 6. Post the proposal on the TeamTomo Zulip (I/O packages get their own `teamtomo/xmlfile` repo — `CONTRIBUTING.md`), with 0.11 as evidence; then the monorepo PR (`io` extra gains `xmlfile`).
 7. Follow-up PR: native Warp grid evaluation in torch-tilt-series (0.11.3, option 2).
@@ -285,16 +285,59 @@ whose `GridMovementX/Y` are non-trivial loads with the global model only, and
 the loader must **warn** (never silently ignore), telling the user to pass
 `local_shifts_2d`; `GridVolumeWarp` is documented as unsupported.
 
-#### 0.11.4 Phases C/D (perturbation, beads, .mod) — in progress
+#### 0.11.4 Phase C — perturb through xmlfile, reload, compare (done)
 
-Plan: baseline projections; perturb through xmlfile only (`AxisOffsetX/Y`
-± 3 px, `AxisAngle` + 1°, an injected zero-mean 3×3×41 `GridMovement` of 3 px);
-byte-diff the written XML; reload with both warpylib and the candidate; compare
-the projection change with the analytic expectation (< 0.05 px). Beads: the 17
-`.fid` tracks → undo `.prexg` → raw 10 Å frame → triangulate in the
-torch-tilt-series frame by least squares through the loaded `TiltSeries`,
-reproject, residual; repeat after perturbation; write baseline/perturbed
-projections as `.mod` contours (imodmodel) to view over `00254.st` in 3dmod.
+`scripts/phase_c_perturb.py`, 00254, 500 random points, perturbations quoted in
+the 10 Å/px stack pixels. Each variant is written with xmlfile only
+(`list_to_text` / `array_to_grid(template=old)`), byte-diffed, then reloaded
+by **both** warpylib and the candidate:
+
+| variant | lines changed in the XML | candidate vs warpylib | (P₁ − P₀) vs analytic expectation | mean \|Δ\| |
+| --- | --- | --- | --- | --- |
+| `AxisOffsetX/Y` += random ±3 px per tilt | 82 (= 2 × 41, expected) | 0.0001 px | **0.0000 px** (Δ = the injected offset, identical for every point) | 1.54 px |
+| `AxisAngle` += 1° | 41 | 0.0001 px | **0.0001 px** (rotation of P₀ − offset by +1° about the image centre; Warp's ZYZ matrix is a standard rotation by −psi = +axis) | 2.07 px |
+| `GridMovementX/Y` 1×1×1 → injected zero-mean 3×3×41 field, amplitude 3 px | 779 (element replaced, line count differs) | 0.0002 px | **0.0000 px** (Δ = −field at the pre-shift position); the grids read back through `grid_to_array` are bit-identical to what was injected | 1.01 px |
+
+Outputs: `output/phaseC/00254_{offsets,axisangle,grid3x3}.xml`, `results.json`,
+`phaseC_projections.npz`.
+
+#### 0.11.5 Phase D — IMOD beads through the loaded `TiltSeries`, .mod output (done)
+
+`scripts/phase_d_beads.py`. The 17 `.fid` tracks (697 observations, tracked on
+`00254_preali.mrc`) → inverse `.prexg` → raw `00254.st` frame (px) → Å relative
+to the image centre → each bead triangulated by least squares through the
+candidate `TiltSeries` (the global model is affine in the point, so `A_t p +
+b_t` is probed from `project_points`) → reprojected.
+
+* Bead reprojection RMS **0.731 px** (per bead 0.53–1.09, median 0.63), mean
+  residual vector (0.000, 0.000) — **identical to the IMOD fiducial solution
+  scored on the `.xf` by `particle_picker/scripts/score_xf_beads.py`
+  (0.731 px)**. The XML alignment loaded through xmlfile + torch-tilt-series is
+  therefore the same alignment IMOD produced, to the precision of the bead
+  tracks. The alternative y orientation gives 10.0 px, so there is **no y-flip**
+  between IMOD model coordinates on the Warp `ts_stack` output and Warp's own
+  image frame. Bead z range −130 … +91 px (centred).
+* Perturbed XMLs from phase C reprojected on the same beads: offsets → Δ equals
+  the injected offset to 0.0000 px; grid → 0.98 px mean displacement.
+* `output/phaseD/beads_00254.mod` (imodmodel): object 0 = observed `.fid` in the
+  raw frame, 1 = reprojected baseline, 2 = +offsets, 3 = +axis angle, 4 =
+  +3×3 grid. View with `3dmod particle_picker/data/EMPIAR-10499/warp/
+  warp_tiltseries/tiltstack/00254/00254.st beads_00254.mod`.
+  `overlay_00254.png`: views 0 / 20 / 40 — observed circles sit on the gold
+  beads, baseline `+` coincides, perturbed markers are displaced by 1–3 px.
+
+#### 0.11.6 What this means for the next steps
+
+* No change to xmlfile was needed for any phase; the helpers and the
+  byte-exact writer are sufficient for reading and editing Warp alignments.
+* The loader (`from_warp_xml`, option 3) can now be written from the table in
+  0.11.1 with no open convention; its unit test asserts exactly those
+  mappings on a synthetic XML.
+* For `particle_picker`/JOLT's G3 export (later): write `GridMovementX/Y` with
+  `array_to_grid(template=old)` in Warp's raw frame in Å with the field
+  **negated** (Warp subtracts), sampled at the pre-movement position, node
+  t-axis = file tilt order; `AxisOffsetX/Y` in Å as (x, y) added after
+  rotation; keep `AxisAngle` = the IMOD `.xf` rotation.
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
