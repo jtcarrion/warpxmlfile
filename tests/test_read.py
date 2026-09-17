@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 
-import xmlfile
 from conftest import PER_TILT_TAGS, Fixture, count_lines
+
+import xmlfile
 
 
 def test_root_tag(xml_path):

@@ -118,12 +118,18 @@ to read files off disk.
 
 ## Development
 
+The tooling follows the other TeamTomo I/O packages (`alnfile`): [uv](https://docs.astral.sh/uv/)
+for environments, `ruff` for linting and formatting, `mypy` in strict mode, `pytest`
+with warnings turned into errors, and `pre-commit` to run all of it before a commit.
+
 ```bash
-pip install -e ".[dev]"
-pytest
-ruff check .
-mypy
+uv sync --group dev                       # create .venv with the dev tools
+uv run pytest
+uv run pre-commit run --all-files         # ruff, ruff-format, mypy, typos, validate-pyproject
 ```
+
+Without uv: `pip install -e . --group dev` (pip >= 25.1) then run `pytest`,
+`ruff check .`, `ruff format --check .` and `mypy` directly.
 
 ### Test data
 

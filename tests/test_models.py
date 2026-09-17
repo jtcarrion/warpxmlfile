@@ -80,9 +80,7 @@ def test_sequence_protocol():
 
 def test_declaration_serialisation():
     assert XmlDeclaration().to_string() == '<?xml version="1.0" encoding="utf-8"?>'
-    assert (
-        XmlDeclaration(encoding=None).to_string() == '<?xml version="1.0"?>'
-    )
+    assert XmlDeclaration(encoding=None).to_string() == '<?xml version="1.0"?>'
     assert XmlDeclaration(standalone="yes").to_string() == (
         '<?xml version="1.0" encoding="utf-8" standalone="yes"?>'
     )

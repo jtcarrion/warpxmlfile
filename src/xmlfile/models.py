@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import TYPE_CHECKING
 
-__all__ = ["XmlDeclaration", "XmlElement", "XmlDocument"]
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+__all__ = ["XmlDeclaration", "XmlDocument", "XmlElement"]
 
 
 @dataclass
@@ -23,6 +26,7 @@ class XmlDeclaration:
     quote: str = '"'
 
     def to_string(self) -> str:
+        """Return the declaration as it is written at the top of a file."""
         q = self.quote
         parts = [f"version={q}{self.version}{q}"]
         if self.encoding is not None:
@@ -56,40 +60,63 @@ class XmlElement:
     tag: str
     attributes: dict[str, str] = field(default_factory=dict)
     text: str | None = None
-    children: list["XmlElement"] = field(default_factory=list)
+    children: list[XmlElement] = field(default_factory=list)
     tail: str | None = None
 
     # -- navigation helpers -------------------------------------------------
     # These locate elements. They do not interpret them.
 
-    def find(self, tag: str) -> "XmlElement | None":
-        """Return the first direct child with `tag`, or None."""
+    def find(self, tag: str) -> XmlElement | None:
+        """Return the first direct child with `tag`, or None.
+
+        Parameters
+        ----------
+        tag
+            Element name to look for, compared exactly.
+        """
         for child in self.children:
             if child.tag == tag:
                 return child
         return None
 
-    def findall(self, tag: str) -> list["XmlElement"]:
-        """Return all direct children with `tag`, in document order."""
+    def findall(self, tag: str) -> list[XmlElement]:
+        """Return all direct children with `tag`, in document order.
+
+        Parameters
+        ----------
+        tag
+            Element name to look for, compared exactly.
+        """
         return [child for child in self.children if child.tag == tag]
 
     def get(self, name: str, default: str | None = None) -> str | None:
-        """Return the raw string value of attribute `name`."""
+        """Return the raw string value of attribute `name`.
+
+        Parameters
+        ----------
+        name
+            Attribute name.
+        default
+            Returned when the attribute is absent.
+        """
         return self.attributes.get(name, default)
 
-    def iter(self) -> Iterator["XmlElement"]:
+    def iter(self) -> Iterator[XmlElement]:
         """Yield this element and every descendant, in document order."""
         yield self
         for child in self.children:
             yield from child.iter()
 
     def __len__(self) -> int:
+        """Number of direct children."""
         return len(self.children)
 
-    def __iter__(self) -> Iterator["XmlElement"]:
+    def __iter__(self) -> Iterator[XmlElement]:
+        """Iterate over the direct children, in document order."""
         return iter(self.children)
 
-    def __getitem__(self, index: int) -> "XmlElement":
+    def __getitem__(self, index: int) -> XmlElement:
+        """Return the direct child at `index`."""
         return self.children[index]
 
 
@@ -113,5 +140,6 @@ class XmlDocument:
     filename: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
+        """Normalise `filename` to a `Path`."""
         if self.filename is not None:
             self.filename = Path(self.filename)

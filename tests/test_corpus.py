@@ -23,7 +23,7 @@ def test_corpus_round_trips_byte_exactly(corpus_paths):
                 doc = xmlfile.read(path)
             if xmlfile.to_string(doc) != path.read_text(encoding="utf-8"):
                 failures.append(f"{path.name}: not byte-exact")
-        except Exception as error:  # noqa: BLE001 - report, do not stop
+        except Exception as error:
             failures.append(f"{path.name}: {type(error).__name__}: {error}")
 
     assert not failures, (

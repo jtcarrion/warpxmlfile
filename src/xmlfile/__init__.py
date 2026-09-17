@@ -7,15 +7,15 @@ from .models import XmlDeclaration, XmlDocument, XmlElement
 from .parser import XmlLossyContentWarning, XmlParseError
 
 __all__ = [
-    "read",
-    "write",
-    "to_string",
-    "from_string",
+    "XmlDeclaration",
     "XmlDocument",
     "XmlElement",
-    "XmlDeclaration",
-    "XmlParseError",
     "XmlLossyContentWarning",
+    "XmlParseError",
+    "from_string",
+    "read",
+    "to_string",
+    "write",
 ]
 
 try:  # pragma: no cover - depends on install method

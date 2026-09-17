@@ -16,10 +16,13 @@ text: values are written back exactly as they were stored.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .models import XmlDocument, XmlElement
-from .typing import PathLike
 from .utils import escape_attribute, escape_text, is_insignificant_whitespace
+
+if TYPE_CHECKING:
+    from .models import XmlDocument, XmlElement
+    from .typing import PathLike
 
 __all__ = ["XmlWriter"]
 
@@ -77,6 +80,7 @@ class XmlWriter:
     # -- public API ---------------------------------------------------------
 
     def to_string(self) -> str:
+        """Return the serialised document as a string."""
         parts: list[str] = []
 
         use_bom = (
@@ -90,9 +94,7 @@ class XmlWriter:
         declaration = self.document.declaration
         if self.xml_declaration and declaration is not None:
             parts.append(declaration.to_string())
-            parts.append(
-                self.document.prologue_tail if self.indent is None else "\n"
-            )
+            parts.append(self.document.prologue_tail if self.indent is None else "\n")
         elif declaration is None and self.indent is None:
             # No declaration to separate from the root, but any leading
             # whitespace the file had is still part of it.
@@ -104,12 +106,11 @@ class XmlWriter:
         return "".join(parts)
 
     def write(self) -> None:
+        """Write the serialised document to `filename`."""
         if self.filename is None:
             raise ValueError("no filename given; cannot write")
         if self.filename.exists() and not self.overwrite:
-            raise FileExistsError(
-                f"{self.filename} already exists and overwrite=False"
-            )
+            raise FileExistsError(f"{self.filename} already exists and overwrite=False")
 
         encoding = self._resolve_encoding()
         text = self.to_string()
@@ -160,6 +161,8 @@ class XmlWriter:
     def _serialise_pretty(
         self, element: XmlElement, parts: list[str], level: int
     ) -> None:
+        indent = self.indent
+        assert indent is not None  # only reached in pretty mode
         parts.append(self._start_tag(element))
 
         has_significant_text = not is_insignificant_whitespace(element.text)
@@ -179,8 +182,8 @@ class XmlWriter:
                 self._serialise_pretty(child, parts, level + 1)
         elif element.children:
             for child in element.children:
-                parts.append("\n" + self.indent * (level + 1))
+                parts.append("\n" + indent * (level + 1))
                 self._serialise_pretty(child, parts, level + 1)
-            parts.append("\n" + self.indent * level)
+            parts.append("\n" + indent * level)
 
         parts.append(f"</{element.tag}>")

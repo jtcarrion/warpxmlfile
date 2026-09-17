@@ -22,13 +22,16 @@ from __future__ import annotations
 import re
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 from xml.parsers import expat
 
 from .models import XmlDeclaration, XmlDocument, XmlElement
-from .typing import PathLike
 from .utils import is_insignificant_whitespace
 
-__all__ = ["XmlParser", "XmlParseError", "XmlLossyContentWarning"]
+if TYPE_CHECKING:
+    from .typing import PathLike
+
+__all__ = ["XmlLossyContentWarning", "XmlParseError", "XmlParser"]
 
 _BOM = "﻿"
 
@@ -83,9 +86,7 @@ class _TreeBuilder:
         self._flush()
         # `ordered_attributes` gives a flat [name, value, name, value, ...]
         # list, which is how attribute order is preserved.
-        pairs = {
-            attributes[i]: attributes[i + 1] for i in range(0, len(attributes), 2)
-        }
+        pairs = {attributes[i]: attributes[i + 1] for i in range(0, len(attributes), 2)}
         element = XmlElement(tag=tag, attributes=pairs)
         if self._stack:
             self._stack[-1].children.append(element)
@@ -226,7 +227,9 @@ class XmlParser:
 
         if builder.dropped:
             where = self.filename if self.filename is not None else "<string>"
-            counts = {kind: builder.dropped.count(kind) for kind in set(builder.dropped)}
+            counts = {
+                kind: builder.dropped.count(kind) for kind in set(builder.dropped)
+            }
             detail = ", ".join(f"{n} {kind}(s)" for kind, n in sorted(counts.items()))
             warnings.warn(
                 f"{where}: {detail} discarded; this document will not round "
