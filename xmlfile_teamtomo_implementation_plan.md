@@ -375,36 +375,67 @@ bandpass vs. WBP), not alignment.
   t-axis = file tilt order; `AxisOffsetX/Y` in Å as (x, y) added after
   rotation; keep `AxisAngle` = the IMOD `.xf` rotation.
 
-### 0.12 `from_warp_xml` as written (uncommitted, 2026-09-17)
+### 0.12 `from_warp_xml` — committed, and the release sequence (2026-09-17)
 
-`~/Software/teamtomo` branch `feat/warp-xml-loader`, four files, unstaged:
-`packages/primitives/torch-tilt-series/{src/torch_tilt_series/io.py,
-src/torch_tilt_series/__init__.py, pyproject.toml, tests/test_io.py}`.
+**Committed** in `~/Software/teamtomo`, branch `feat/warp-xml-loader`, commit
+`c84ba36` "feat(torch-tilt-series): from_warp_xml loader for Warp/M tilt-series
+XML via xmlfile" (off upstream `2d9f20c`; not pushed, no fork yet). Four files
+(+170 / −6): `packages/primitives/torch-tilt-series/{src/torch_tilt_series/
+io.py, src/torch_tilt_series/__init__.py, pyproject.toml, tests/test_io.py}`.
 
-* `from_warp_xml(xml_path, image_path=None, local_shifts_2d=None,
-  device="cpu") -> TiltSeries`, same shape as the aretomo/etomo loaders, lazy
-  `import xmlfile`; parses `Angles`, `AxisAngle`, `AxisOffsetX/Y`, `UseTilt`,
-  CTF `PixelSize` with the xmlfile helpers; `sample_translations =
-  (AxisOffsetY, AxisOffsetX)` Å; drops `UseTilt=False` tilts and uses them as
-  `image_indices` (as the etomo loader drops excluded views);
-  `levelled2tomo` = z-flip; warns when `GridMovementX/Y` is non-zero and no
-  `local_shifts_2d` was given; `GridVolumeWarp` documented as ignored.
-* `__init__.py`: export + `TiltSeries.from_warp_xml` classmethod;
-  `pyproject.toml`: `xmlfile` in the `io` extra and `test` group; three tests
-  appended to `tests/test_io.py` on a synthetic XML (global fields,
-  `UseTilt=False` dropping, warning/callable).
-* Checks: package `pytest` 44 passed (41 + 3); ruff + ruff-format clean; mypy
-  adds three errors of the same kind the existing loaders already have
-  (numpy arrays passed to `TiltSeries(...)` typed as `Tensor`).
-* **API note to raise with the maintainers:** the aretomo/etomo loaders take
-  `pixel_spacing` as an argument (the pixel of the images at `image_path`);
-  `from_warp_xml` reads it from the XML, which is the raw-frame pixel, while
-  the tilt stack one reconstructs from is usually binned (10 Å here). Either
-  add a `pixel_spacing=None` override argument, or document setting
-  `ts.pixel_spacing` after loading. Undecided; the workflow script sets the
-  attribute.
-* Before an upstream PR: `uv lock` (new dependency), and `xmlfile` must be
-  installable from PyPI (or the maintainers' preferred source).
+```python
+from_warp_xml(
+    xml_path, pixel_spacing=None, image_path=None, local_shifts_2d=None, device="cpu"
+) -> TiltSeries
+```
+
+* Same shape as `from_aretomo_output(aln_path, pixel_spacing, image_path,
+  device)`; lazy `import xmlfile`; parses `Angles`, `AxisAngle`,
+  `AxisOffsetX/Y`, `UseTilt`, CTF `PixelSize` with the xmlfile helpers.
+* `sample_translations = (AxisOffsetY, AxisOffsetX)` Å; `levelled2tomo` =
+  z-flip; `UseTilt=False` tilts dropped and the kept ones become
+  `image_indices` (as the etomo loader drops excluded views).
+* `pixel_spacing`: **only** the Å-per-pixel of the images at `image_path`;
+  defaults to the XML `PixelSize` (raw-frame pixel); pass it for a binned
+  stack (10 Å for the `ts_stack` output). The Å alignment is untouched —
+  verified: argument vs attribute set gives bit-identical reconstructions
+  (max |diff| 4e-8).
+* `local_shifts_2d` passthrough; warns when `GridMovementX/Y` is non-zero and
+  none is given; `GridVolumeWarp` documented as ignored (0.11.3).
+* Tests (appended to the package's `tests/test_io.py`, synthetic XML in
+  `tmp_path`): global fields + pixel-spacing override, `UseTilt=False`
+  dropping, warning without / no warning with a callable. Package suite 47
+  passed; ruff + ruff-format clean; mypy adds three errors of the kind the
+  existing loaders already have (numpy arrays passed where `Tensor` is typed).
+
+**Why nothing about xmlfile's hosting matters for the code:** `io.py` imports
+`xmlfile` by name; the editable install used for all of 0.11 is the same code
+path a PyPI or `teamtomo/xmlfile` install gives. What matters is
+*installability*: the monorepo's CI runs `uv sync --locked`, and `io = [...,
+"xmlfile"]` cannot resolve while xmlfile is unreleased and its repo private.
+
+**Release sequence (order matters):**
+
+1. ~~Commit the loader locally~~ — `c84ba36`.
+2. **Zulip post** (imagesc.zulipchat.com, channel TeamTomo): xmlfile as a new
+   I/O package (repo under the org per `CONTRIBUTING.md`), the loader, and
+   0.11 as evidence. Ask: (a) create `teamtomo/xmlfile` (transfer of
+   `jtcarrion/xmlfile`) or keep it under the author; (b) should the loader PR
+   wait for the PyPI release; (c) the native grid evaluator (0.11.3 option 2)
+   using `torch-cubic-spline-grids` as a follow-up — acceptable dependency?;
+   (d) `GridVolumeWarp`: is a per-tilt 3-D hook in `TiltSeries` wanted?
+3. **xmlfile v0.0.1 on PyPI**: make the repo public; register it as a PyPI
+   trusted publisher (project `xmlfile`, workflow `ci.yml`, environment none);
+   tag `v0.0.1` on `main` and push the tag — the alnfile-derived CI builds,
+   inspects (`core-metadata-version = "2.4"` pin) and publishes. The version
+   comes from the tag (hatch-vcs). If the repo has moved to the org first,
+   register the publisher under that path instead.
+4. Monorepo: fork `teamtomo/teamtomo`, push `feat/warp-xml-loader`, `uv lock`
+   (new dependency), `uv run --group dev pre-commit run --all-files`, open the
+   PR against `main`.
+5. Follow-up PR: native grid evaluation (0.11.3 option 2).
+6. Then back to `particle_picker`/JOLT: G3 export with the helpers and the
+   conventions of 0.11.1/0.11.7.
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
