@@ -1,17 +1,23 @@
-# xmlfile TeamTomo Implementation Plan
+# xmlfile → warpxmlfile: TeamTomo Implementation Plan
 
 Prepared for developing a small TeamTomo-style XML I/O package modeled after `starfile`.
 
-## 0. Current status and handoff (updated 2026-09-20)
+## 0. Current status and handoff (updated 2026-09-21)
 
 > Read this section first. It is self-contained and supersedes anything below
 > that conflicts with it. Sections 1–20 are the original plan (2026-09-09),
 > kept for its reasoning; parts that changed are marked **Superseded** inline.
 
-**State in ten lines (2026-09-20).**
-1. `xmlfile` is feature-complete for v0.0.1 and on `main` of `jtcarrion/xmlfile`
-   (`fe1bd99`): byte-exact core + numpy helpers, alnfile-style tooling, CI green.
-   Not on PyPI yet; repo still private. (0.3, 0.4, 0.9)
+**State in ten lines (2026-09-21).** TeamTomo feedback received (0.14): rename
+to **warpxmlfile**, make `read()` return deserialised Warp data (no generic
+tree in the public API, no data transformation), and handle grids by
+*fitting* TeamTomo's own deformation model to observations generated from a
+reimplemented Warp model rather than porting einspline. The redesign of
+`read()`/`write()` is specified in **0.15** and is the next thing to build.
+Everything below in this list is the state *before* that redesign.
+1. `xmlfile` (to be renamed) is on `main` of `jtcarrion/xmlfile` (`fe1bd99`):
+   byte-exact core + numpy helpers, alnfile-style tooling, CI green. Not on
+   PyPI; repo private. `warpxmlfile` is free on PyPI (checked 2026-09-21). (0.3, 0.4)
 2. The Warp XML → torch-tilt-series mapping is proven to 1e-4 px against
    warpylib and end-to-end through torch-reconstruct-tomogram on EMPIAR-10499
    00254 (beads reconstruct in IMOD's frame). (0.11)
@@ -122,12 +128,12 @@ garbage-collected, so they are **not** in `main`'s history.
 
 ### 0.5 Decisions made (answers to section 19)
 
-1. **Name:** keep `xmlfile`. PyPI name is free (checked 2026-09-17).
+1. **Name:** ~~keep `xmlfile`~~ → **`warpxmlfile`** (TeamTomo, 2026-09-21: "xmlfile" is too generic; their I/O packages are named after the format). PyPI `warpxmlfile` free (2026-09-21).
 2. **Fixtures:** commit one file only (`TS_1.xml`, public EMPIAR provenance, most complete available). Other XML stays local and is validated with `pytest --xml-corpus DIR`.
 3. **Parser:** standard library yes, `ElementTree` no. ElementTree rewrites `<w:b>` to `{uri}b` and silently deletes the `xmlns:w` attribute, so the parser drives `expat` directly. No lxml.
 4. **Fidelity:** byte-exact by default; pretty-printing opt-in. Only comments/PIs lose content. Closing the cosmetic gaps would need a custom lexer and is not planned; comment/PI node types could be added if a real file needs them. Property-based tests (`hypothesis`) are an option for stronger guarantees.
 5. **pandas:** acceptable as a dependency (TeamTomo I/O packages such as alnfile already depend on it). **Revised 2026-09-17:** v0.0.1 helpers return NumPy arrays (numpy becomes the only runtime dependency); pandas stays out until a DataFrame-shaped helper is actually needed.
-6. **Scope of v0.0.1:** a robust reader/writer plus helper functions. No Warp-specific adapter in xmlfile. Downstream goal: a loader in torch-tilt-series that uses the XML data.
+6. **Scope of v0.0.1:** ~~a robust reader/writer plus helper functions. No Warp-specific adapter in xmlfile.~~ **Revised 2026-09-21 (TeamTomo):** the package *is* the Warp adapter — `read()` deserialises a Warp tilt-series XML into typed data, `write()` serialises it back; the generic byte-exact XML tree becomes the private engine (0.15). It transforms nothing (no units, signs, frames, splines). Downstream goal unchanged: the loader in torch-tilt-series.
 7. **Overwrite:** `write` overwrites by default, like starfile and mdocfile. This supports editing ("perturbing") alignments and rerunning torch-tilt-series.
 8. **Python floor: 3.10** (2026-09-17). alnfile's floor; the code uses nothing from 3.11; the main consumer env is 3.10.
 9. **Template (open decision A): hand-align** `pyproject.toml` / pre-commit / CI to alnfile (`b582488`) rather than regenerate with copier. Test data stays in `tests/data/` (open decision D).
@@ -136,7 +142,7 @@ garbage-collected, so they are **not** in `main`'s history.
 
 ### 0.6 Research findings (2026-09-10)
 
-**Route into TeamTomo.** TeamTomo is now a monorepo (`teamtomo/teamtomo`,
+**Route into TeamTomo.** (Zulip thread opened 2026-09-21; feedback in 0.14.) TeamTomo is now a monorepo (`teamtomo/teamtomo`,
 `packages/{primitives,algorithms,utils,skel}`). torch-tilt-series is in
 `packages/primitives/`, torch-tiltxcorr in `packages/algorithms/`. But
 `CONTRIBUTING.md` says: *"if this is an I/O package, please reach out on Zulip
@@ -229,10 +235,11 @@ bmp6 has `Depth="4" Duration="10"` — helpers must handle both 3D and 4D.
 2. ~~Conventions~~ — done, PR #1 merged (`988a3c7`). Was: `requires-python >=3.10`; `[dependency-groups]`; ruff/mypy/pytest (`filterwarnings = ["error"]`)/coverage/check-manifest/typos blocks from alnfile; `.pre-commit-config.yaml`; alnfile's `.github/workflows/ci.yml` (incl. the trusted-publishing job, inert until a `v*` tag); numpy-style docstrings; explicit typed keyword parameters for `to_string`/`write` (same keyword names); tests using `pytest.warns` for the lossy-content warning. Run ruff, ruff-format and mypy in a `uv sync --group dev` venv until green.
 3. ~~M2 helpers~~ — done, PR #2 merged. Was: (branch `feat/helpers`, `src/xmlfile/helpers.py`), design per 0.5 #10; tests on `TS_1.xml` (984-node 3D grids, 4D grids, 41 tilts, CTF/OptionsCTF params, `TiltPS1D`), array→grid→array identity, in-place replacement round trip, error cases; `--xml-corpus` on the bmp6 directory locally. This is the same implementation that `particle_picker` G3 will call.
 4. ~~Numerical proof of the Warp ↔ torch-tilt-series mapping~~ — **done, phases A–D**; see **0.11** (revised 2026-09-17: lives in `~/Software/xmlfile-validation/`, not in `particle_picker`, against the monorepo clone `~/Software/teamtomo`). Original wording: (i) xmlfile arrays == warpylib `CubicGrid.values` on `TS_042.xml`; (ii) hand-built `TiltSeries(..., local_shifts_2d=closure)` vs warpylib `get_position_in_all_tilts` on random points, enumerating the sign / order / frame hypotheses, target < 0.05 px; (iii) the G3 path: `array_to_grid` a 3×3×41 field into `00254.xml`, write, re-read with warpylib, evaluate; (iv) a synthetic `UseTilt`-False case.
-5. `from_warp_xml` in torch-tilt-series, **option 3 of 0.11.3** (global-only loader first), on branch `feat/warp-xml-loader` of `~/Software/teamtomo`; tests appended to the package's existing `tests/test_io.py` (synthetic XML in `tmp_path`, no lab data). Only after phases C/D are complete.
-6. Post the proposal on the TeamTomo Zulip (I/O packages get their own `teamtomo/xmlfile` repo — `CONTRIBUTING.md`), with 0.11 as evidence; then the monorepo PR (`io` extra gains `xmlfile`).
-7. Follow-up PR: native Warp grid evaluation in torch-tilt-series (0.11.3, option 2).
-8. Later, back in `particle_picker`/JOLT: use the helpers + the proven conventions for the G3 export (`local_alignment_BA.md` §7/§8).
+5. ~~`from_warp_xml` in torch-tilt-series~~ — written and committed locally (`c84ba36`, 0.12); to be adapted to the redesigned reader (0.15).
+6. ~~Post on Zulip~~ — done 2026-09-21; feedback and decisions in 0.14.
+7. **Redesign (0.15):** rename to `warpxmlfile`; `read()` → typed Warp data, `write()` byte-exact; generic tree private. Then adapt the loader, then the loader PR.
+8. **Grids (0.14 #3):** reimplement Warp's 2-D/3-D deformation model in torch (observations) and fit TeamTomo's deformation model to them; ask Utz Ermel what exists first. Prototype and residuals in the validation folder.
+9. Later, back in `particle_picker`/JOLT: use `warpxmlfile` + the proven conventions for the G3 export (`local_alignment_BA.md` §7/§8).
 
 ### 0.11 Numerical validation against torch-tilt-series (2026-09-17)
 
@@ -297,7 +304,10 @@ loader cannot depend on warpylib. Options considered: (1) global-only loader
 with a `local_shifts_2d` argument the caller supplies; (2) native evaluation in
 the loader (~100–150 lines: port of the coefficient solve + evaluation with the
 monorepo's `torch-cubic-spline-grids`, verified by the phase-B test);
-**(3) = 1 now, 2 as a follow-up PR — chosen.** Consequence for a user: an XML
+**(3) = 1 now, 2 as a follow-up PR — chosen.** *Superseded for the follow-up
+(2026-09-21, 0.14 #3): the maintainers prefer reimplementing Warp's
+deformation model and fitting TeamTomo's own model to it over porting
+einspline into torch-cubic-spline-grids.* Consequence for a user: an XML
 whose `GridMovementX/Y` are non-trivial loads with the global model only, and
 the loader must **warn** (never silently ignore), telling the user to pass
 `local_shifts_2d`; `GridVolumeWarp` is documented as unsupported.
@@ -392,7 +402,7 @@ bandpass vs. WBP), not alignment.
   t-axis = file tilt order; `AxisOffsetX/Y` in Å as (x, y) added after
   rotation; keep `AxisAngle` = the IMOD `.xf` rotation.
 
-### 0.12 `from_warp_xml` — committed, and the release sequence (2026-09-17)
+### 0.12 `from_warp_xml` — committed, and the release sequence (2026-09-17; sequence superseded by 0.14/0.15)
 
 **Committed** in `~/Software/teamtomo`, branch `feat/warp-xml-loader`, commit
 `c84ba36` "feat(torch-tilt-series): from_warp_xml loader for Warp/M tilt-series
@@ -514,6 +524,97 @@ Validation (2026-09-20, script written and run):
 | `--device cuda --batch_size 16` | CUDA OOM at 12.9 GB — each 192³ patch × 41 sub-tilts is ~3 GB; keep `--batch_size` ≤ 4 on a 16 GB card |
 
 Outputs under `~/Software/xmlfile-validation/output/workflow/`.
+
+### 0.14 TeamTomo feedback (Zulip, 2026-09-21) and what it changes
+
+Three points from the maintainers, and the decisions taken:
+
+| # | feedback | decision |
+| --- | --- | --- |
+| 1 | "xmlfile is too generic, maybe warpxmlfile" | **Rename to `warpxmlfile`** (repo, package, import). Free on PyPI. Do it now — unreleased, private, only our uncommitted loader imports it. |
+| 2 | "an XML data-handling module should not transform data, just serialize/deserialize" | Confirms the boundary we drew (no signs/frames/units/splines/`TiltSeries` in the package). But it also means the public API should be the **deserialised Warp data**, alnfile-style, not a generic XML tree plus helper functions. Design in 0.15: `read()` → typed model, `write()` back; the byte-exact tree stays as the private engine. Parsing `"1.5"` to a float or a `Node` list to an array is deserialisation and stays. |
+| 3 | "reimplement the Warp models in 2D and 3D, generate observations from them, and fit them to the deformation model on our tilt-series object (Utz Ermel may have something like this)" | The grid follow-up is **not** an einspline port into torch-cubic-spline-grids. Instead: (a) a torch implementation of Warp's grid *model* (2-D `GridMovement`, 4-D `GridVolumeWarp`) that evaluates displacements at points — this still needs the interpolating evaluation internally, so the ~40-line coefficient solve lives inside "the Warp model", not as a spline-package feature; (b) fit whatever TeamTomo adopts as `local_shifts_2d`/`local_shifts` (presumably a torch-cubic-spline-grids field) to those observations by least squares; (c) report the fit residual so the approximation is explicit. Our validation harness (warpylib oracle) scores any candidate — Catmull-Rom already measured at 0.23–0.76 px rms, the bar a fit must beat. Checked `cryoet-alignment` 0.2.0: global-only, no grid code (section 2) — ask Utz what he meant before writing anything. |
+
+Not changed by the feedback: the proven mapping (0.11.1), the global loader
+logic (0.12), the reusable workflow script (0.13), the validation harness.
+
+### 0.15 Design: `warpxmlfile.read()` / `write()` (2026-09-21, for JC's review)
+
+**Principle.** `read()` returns *what the file says*, as Python data: strings
+become numbers, booleans and arrays; nothing is reinterpreted (no units, no
+signs, no frames, no pixel conversion, no spline evaluation, no `TiltSeries`).
+`write()` puts the data back into the file byte-exactly where nothing changed.
+The generic ordered-XML engine we built (parser, writer, `XmlElement`) is kept
+verbatim but becomes **private** — it is what makes "unknown elements survive"
+and "an edit changes only the edited values" true.
+
+**Public API** (starfile/alnfile shape):
+
+```python
+import warpxmlfile
+
+ts = warpxmlfile.read("TS_1.xml")              # -> WarpTiltSeries
+ts.axis_offset_x[3] += 30.0                    # Å, as in the file
+ts.grids["GridMovementX"].values[...] = ...    # (Depth, Height, Width) float32
+warpxmlfile.write(ts, "TS_1_edited.xml")       # only the edited elements differ
+text = warpxmlfile.to_string(ts); ts2 = warpxmlfile.from_string(text)
+```
+
+**`WarpTiltSeries`** — a pydantic model (the convention in alnfile, mdocfile,
+imodmodel; `arbitrary_types_allowed` for arrays as imodmodel does):
+
+| field | from | type |
+| --- | --- | --- |
+| `attributes` | root attributes, all of them, verbatim | `dict[str, str]` |
+| `image_dimensions_angstrom`, `volume_dimensions_angstrom` | typed views of two root attributes | `tuple[float, ...]` (`None` if absent) |
+| `angles`, `dose`, `axis_angle`, `axis_offset_x`, `axis_offset_y`, `fov_fraction` | per-tilt elements | `np.ndarray` float64, length = n_tilts |
+| `use_tilt` | `UseTilt` | `np.ndarray` bool |
+| `movie_path` | `MoviePath` | `list[str]` |
+| `ctf`, `options_ctf` | `Param` blocks | `dict[str, str]` (values kept as text — mixed scalars/lists like `ZernikeCoeffsOdd`; `None` if the block is absent) |
+| `grids` | every child whose tag starts with `Grid` | `dict[str, Grid]` with `Grid(values: np.ndarray float32 (D,H,W) or (T,D,H,W), margins: tuple[float, ...])` |
+| `tilt_ps1d`, `tilt_simulated_scale` | repeated pair-series elements | `list[np.ndarray (n, 2)]` (empty list if absent) |
+| `extra` | tags not covered above | `list[str]` of tag names, read-only, so the user knows they exist (they are preserved by `write`) |
+| `n_tilts` | property | `len(angles)` |
+
+Validation on read (raise `ValueError`, never silently repair): every per-tilt
+element has `n_tilts` values; grid node count = product of dims, no missing or
+duplicate nodes; `Param` without `Name`/`Value`; duplicate `Param` names.
+
+**`write()` semantics — "patch, don't regenerate".** The model keeps the
+parsed document privately (`_document`). `write` walks the typed fields; for
+each one it compares the current value with what was parsed and **replaces
+only the elements whose value changed**, using the file's own whitespace
+(`template=`) and Warp's number formatting (float32 shortest round-trip,
+already proven identical on 433k values). Unchanged → byte-identical output
+(the corpus test keeps guaranteeing this on ~190 files); changed → the minimal
+diff we validated in phase C (82 lines for 41 offsets, one element for a grid).
+Root attributes are written from `attributes`; a grid whose array shape
+changed gets new `Width/Height/Depth[/Duration]`. A model built without a
+document (`WarpTiltSeries(angles=..., ...)`) serialises into Warp's own layout
+(BOM, tabs, element order of a Warp file) — needed by writers such as JOLT's
+export, secondary for v0.0.1.
+
+**What stays out** (belongs to torch-tilt-series or the caller): anything that
+knows Warp's frame or sign conventions, pixel ↔ Å, the z-flip, `UseTilt`
+filtering into `image_indices`, grid evaluation/fitting, `.xf`/IMOD conversion.
+
+**Migration from the current code.** `models.py`/`parser.py`/`writer.py` →
+`warpxmlfile/_xml/` unchanged; `helpers.py` → `_convert.py` (internals of the
+reader/writer; no longer exported); new `models.py` (`WarpTiltSeries`, `Grid`)
+and `functions.py` (`read`/`write`/`to_string`/`from_string` on the model).
+Dependencies: numpy + pydantic (as alnfile). Tests: the byte-exact,
+edge-case and corpus tests stay (against the private engine); the helper
+tests become reader/writer tests on `TS_1.xml`; add "edit one field → minimal
+diff" and "unchanged → byte-exact" model tests. Docs: README rewritten around
+`WarpTiltSeries`. `from_warp_xml` shrinks to
+`ts = warpxmlfile.read(p); TiltSeries(tilt_angles=ts.angles, ...)`.
+
+**Questions to settle** (JC first, then maintainers if needed): (a) pydantic
+model (TeamTomo convention) vs a plain dataclass (one dependency fewer);
+(b) per-tilt data as arrays (proposed) vs a pandas DataFrame as alnfile
+returns — arrays because grids and pair series do not fit a table and the
+loader wants arrays; a `to_dataframe()` convenience is cheap to add later;
+(c) `ctf` values as text (proposed) vs parsed floats where possible.
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
@@ -661,6 +762,8 @@ Relevant points:
 Implication for `xmlfile`:
 
 `cryoet-alignment` is a useful reference for parsing some Warp XML alignment fields, but it should not be the base behavior for `xmlfile`. Our package must preserve unknown and currently unmodeled XML content by default. Dropping fields is only acceptable in explicit conversion/adaptor functions with loud documentation.
+
+> **Re-checked 2026-09-21 (v0.2.0, `47df6f5`):** still global-only. `io/warp/alignment.py` (189 lines, `xml.etree`) reads `Angles`, `AxisAngle`, `AxisOffsetX/Y`, `CTF/PixelSize`; its docstring states that Warp's local fields "have no equivalent"; `__str__` writes a fresh minimal XML (everything else dropped). No grid evaluation or fitting code anywhere in the package; the Data Portal `Alignment` model is per-section global only. So it does not contain 2-D grid code — `warpxmlfile` is complementary (full content, byte-exact) and cryoet-alignment could consume it later.
 
 ## 3. Initial XML fixtures reviewed
 
