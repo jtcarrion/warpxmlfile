@@ -2,11 +2,28 @@
 
 Prepared for developing a small TeamTomo-style XML I/O package modeled after `starfile`.
 
-## 0. Current status and handoff (updated 2026-09-17, evening)
+## 0. Current status and handoff (updated 2026-09-20)
 
 > Read this section first. It is self-contained and supersedes anything below
 > that conflicts with it. Sections 1–20 are the original plan (2026-09-09),
 > kept for its reasoning; parts that changed are marked **Superseded** inline.
+
+**State in ten lines (2026-09-20).**
+1. `xmlfile` is feature-complete for v0.0.1 and on `main` of `jtcarrion/xmlfile`
+   (`fe1bd99`): byte-exact core + numpy helpers, alnfile-style tooling, CI green.
+   Not on PyPI yet; repo still private. (0.3, 0.4, 0.9)
+2. The Warp XML → torch-tilt-series mapping is proven to 1e-4 px against
+   warpylib and end-to-end through torch-reconstruct-tomogram on EMPIAR-10499
+   00254 (beads reconstruct in IMOD's frame). (0.11)
+3. `from_warp_xml` is committed on `feat/warp-xml-loader` of the local monorepo
+   clone (`c84ba36`), not pushed, no PR. Grids are parsed and warned about, not
+   evaluated (option 3). (0.12)
+4. Next: Zulip → xmlfile transfer/release → loader PR → native grid evaluator.
+   (0.12 release sequence)
+5. A reusable "tilt-series + XML → tomogram" script (single or batch, CPU or
+   GPU, no dependency outside numpy + TeamTomo) is written and validated
+   (0.13); it lives in `~/Software/xmlfile-validation/scripts/` until the
+   maintainers say where an example belongs.
 
 ### 0.1 Where everything is
 
@@ -436,6 +453,67 @@ path a PyPI or `teamtomo/xmlfile` install gives. What matters is
 5. Follow-up PR: native grid evaluation (0.11.3 option 2).
 6. Then back to `particle_picker`/JOLT: G3 export with the helpers and the
    conventions of 0.11.1/0.11.7.
+
+### 0.13 Reusable workflow script: tilt-series + Warp XML → tomogram (2026-09-20)
+
+Purpose: one command that takes a Warp/M tilt-series XML and its tilt stack,
+builds the `TiltSeries` with `from_warp_xml`, and reconstructs a tomogram with
+torch-reconstruct-tomogram — for a single series or for every series of a
+Warp project directory. Decisions (JC, 2026-09-20): must work for **any** Warp
+XML; single **and** batch mode; explicit thickness allowed; **no dependency
+outside numpy + TeamTomo packages** (so no warpylib: local grids are *not*
+applied, the loader's warning is shown); `--device` for GPU; output = MRC
+volumes only.
+
+`~/Software/xmlfile-validation/scripts/reconstruct_from_warp_xml.py`
+(candidate for a monorepo `examples/` file later):
+
+```
+reconstruct_from_warp_xml.py --xml TS.xml --stack TS.st --output TS.mrc [options]
+reconstruct_from_warp_xml.py --warp_dir <project> [--ts_list 00254,00255] --output_dir <dir> [options]
+
+--thickness_angstrom  Z extent of the volume; default = the XML's
+                      VolumeDimensionsAngstrom z when it is > 1 Å, else required
+--pixel_spacing       Å/px of the stack; default = the MRC header voxel size
+--output_pixel_spacing  voxel size of the output (default = stack pixel; larger = binned)
+--sidelength 128 --blend_margin (default sidelength//4) --batch_size 4
+--device cpu|cuda     images are moved to the device; reconstruction follows them
+--no_preprocess       skip plane subtraction / bandpass / normalisation
+```
+
+Batch mode discovers the standard layout `warp_tiltseries/<TS>.xml` +
+`warp_tiltseries/tiltstack/<TS>/<TS>.st` (also accepts `<TS>.mrc`), skips a
+series whose stack is missing with a message, and writes `<output_dir>/<TS>.mrc`.
+
+Robustness rules ("any XML"):
+* x/y of the volume come from the stack dimensions, never from the XML
+  (`ImageDimensionsAngstrom` can be `"0, 0"` in some workflows).
+* thickness from `VolumeDimensionsAngstrom` z only when > 1 Å (etomo-import
+  files carry 1 or 0); otherwise `--thickness_angstrom` is required.
+* the stack pixel comes from the MRC header (10 Å for `ts_stack` output) and
+  is passed as `pixel_spacing=` to the loader; the Å alignment is unchanged
+  (0.12).
+* `UseTilt=False` tilts are dropped by the loader and never loaded.
+* `GridMovementX/Y` non-zero → the loader's warning is printed once per
+  series; the tomogram is reconstructed with the global model only until the
+  native evaluator exists (0.11.3). `GridVolumeWarp` is ignored.
+* the tilt order in the XML must be the stack's frame order (Warp writes both
+  from the same list; verified on 00254, descending +60 → −60).
+* the MRC is written float32 with the output voxel size in the header; the
+  volume frame is torch-reconstruct-tomogram's `zyx`, which on 00254 coincides
+  with IMOD's tomogram frame (0.11.6).
+
+Validation (2026-09-20, script written and run):
+
+| run | result |
+| --- | --- |
+| single mode, 00254, `--thickness_angstrom 3400` (CPU, 8 threads) | (340, 630, 652) @ 10 Å in 158 s; **max \|diff\| 9e-8** vs the phase-F baseline volume |
+| same without `--thickness_angstrom` | clean error: "VolumeDimensionsAngstrom has no thickness; pass --thickness_angstrom" |
+| batch mode, `--warp_dir …/EMPIAR-10499/warp --output_pixel_spacing 20 --sidelength 64` | discovers `warp_tiltseries/00254.xml` + `tiltstack/00254/00254.st`, writes `<out>/00254.mrc` (170, 315, 326) @ 20 Å in 36 s |
+| `--device cuda` (RTX 4070 Ti SUPER, torch 2.14 cu126 in the validation venv) | **10 s** (vs 158 s CPU); vs CPU volume: corr 0.999999, rms diff 4e-5 on a volume std of 2.7e-2 (float32 FFT ordering) |
+| `--device cuda --batch_size 16` | CUDA OOM at 12.9 GB — each 192³ patch × 41 sub-tilts is ~3 GB; keep `--batch_size` ≤ 4 on a 16 GB card |
+
+Outputs under `~/Software/xmlfile-validation/output/workflow/`.
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
