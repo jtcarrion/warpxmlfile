@@ -6,7 +6,7 @@ import re
 
 from conftest import PER_TILT_TAGS, Fixture, count_lines
 
-import xmlfile
+from warpxmlfile import _xml as xmlfile
 
 
 def test_root_tag(xml_path):

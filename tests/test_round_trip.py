@@ -11,7 +11,7 @@ Two guarantees are tested:
 
 from __future__ import annotations
 
-import xmlfile
+from warpxmlfile import _xml as xmlfile
 
 
 def test_semantic_round_trip_preserving_whitespace(xml_path):

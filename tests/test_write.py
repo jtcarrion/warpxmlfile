@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import xmlfile
+from warpxmlfile import _xml as xmlfile
 
 
 def test_write_read_round_trip(xml_path, tmp_path):

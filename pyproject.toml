@@ -19,14 +19,14 @@ core-metadata-version = "2.4"
 
 # https://peps.python.org/pep-0621/
 [project]
-name = "xmlfile"
+name = "warpxmlfile"
 dynamic = ["version"]
-description = "Read and write XML metadata files in Python."
+description = "Read and write Warp / M tilt-series XML files in Python."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Jackson Carrion", email = "jcarrion@mit.edu" }]
-keywords = ["xml", "cryo-em", "cryo-et", "metadata", "io"]
+keywords = ["warp", "xml", "cryo-em", "cryo-et", "metadata", "io"]
 # https://pypi.org/classifiers/
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -40,15 +40,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 # add your package dependencies here
-dependencies = ["numpy"]
+dependencies = ["numpy", "pydantic>=2"]
 
 [project.urls]
-homepage = "https://github.com/teamtomo/xmlfile"
-repository = "https://github.com/teamtomo/xmlfile"
-documentation = "https://github.com/teamtomo/xmlfile#readme"
-changelog = "https://github.com/teamtomo/xmlfile#changelog"
-"Bug Tracker" = "https://github.com/teamtomo/xmlfile/issues"
-"Source Code" = "https://github.com/teamtomo/xmlfile"
+homepage = "https://github.com/jtcarrion/warpxmlfile"
+repository = "https://github.com/jtcarrion/warpxmlfile"
+documentation = "https://github.com/jtcarrion/warpxmlfile#readme"
+changelog = "https://github.com/jtcarrion/warpxmlfile#changelog"
+"Bug Tracker" = "https://github.com/jtcarrion/warpxmlfile/issues"
+"Source Code" = "https://github.com/jtcarrion/warpxmlfile"
 
 # https://peps.python.org/pep-0735/
 # setup with `uv sync` or `pip install -e . --group dev`
@@ -134,7 +134,7 @@ exclude_lines = [
 ]
 
 [tool.coverage.run]
-source = ["xmlfile"]
+source = ["warpxmlfile"]
 
 # https://github.com/mgedmin/check-manifest#configuration
 # add files that you want check-manifest to explicitly ignore here
