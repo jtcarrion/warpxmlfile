@@ -14,8 +14,13 @@ Prepared for developing a small TeamTomo-style XML I/O package modeled after `st
 to_file` on the model as in alnfile), `write()` patches only edited values;
 113 tests on 3.10/3.12; byte-exact on the fixture and 187 local Warp files.
 The torch-tilt-series loader and the validation/workflow scripts consume it
-(0.12, 0.16). Still to do: PyPI release, Zulip follow-up on the grid-fitting approach,
-loader PR. Older items below are kept
+(0.12, 0.16). Still to do: PyPI release (who publishes is the developers' call), Zulip
+follow-up, loader PR. **2026-09-28:** `jtcarrion/warpxmlfile` is **public**;
+`teamtomo/teamtomo` forked to `jtcarrion/teamtomo`; `feat/warp-xml-loader`
+rebased onto upstream `c1c67df` (commits `854596a`, `b9600a9`) and pushed to
+the fork. Confirmed blocker for CI: `uv lock` cannot resolve `warpxmlfile`
+until it is on PyPI ("not found in the package registry"), so the PR should
+open as a **draft** with that stated. Older items below are kept
 for history.
 1. `warpxmlfile` — package and repo (**renamed in place to `jtcarrion/warpxmlfile`
    on 2026-09-27**; local clone still in the `xmlfile/` folder, remote updated),
