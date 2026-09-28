@@ -14,11 +14,12 @@ Prepared for developing a small TeamTomo-style XML I/O package modeled after `st
 to_file` on the model as in alnfile), `write()` patches only edited values;
 113 tests on 3.10/3.12; byte-exact on the fixture and 187 local Warp files.
 The torch-tilt-series loader and the validation/workflow scripts consume it
-(0.12, 0.16). Still to do: GitHub repo rename (in place), PyPI release, Zulip
-follow-up on the grid-fitting approach, loader PR. Older items below are kept
+(0.12, 0.16). Still to do: PyPI release, Zulip follow-up on the grid-fitting approach,
+loader PR. Older items below are kept
 for history.
-1. `warpxmlfile` (package; repo still named `jtcarrion/xmlfile`, private) on
-   `main` @ `b925fb9`: `WarpTiltSeries` model over a private byte-exact XML
+1. `warpxmlfile` — package and repo (**renamed in place to `jtcarrion/warpxmlfile`
+   on 2026-09-27**; local clone still in the `xmlfile/` folder, remote updated),
+   private, on `main` @ `b925fb9`: `WarpTiltSeries` model over a private byte-exact XML
    engine, alnfile-style tooling, CI green. Not on PyPI; `warpxmlfile` free. (0.15, 0.16)
 2. The Warp XML → torch-tilt-series mapping is proven to 1e-4 px against
    warpylib and end-to-end through torch-reconstruct-tomogram on EMPIAR-10499
@@ -239,7 +240,7 @@ bmp6 has `Depth="4" Duration="10"` — helpers must handle both 3D and 4D.
 4. ~~Numerical proof of the Warp ↔ torch-tilt-series mapping~~ — **done, phases A–D**; see **0.11** (revised 2026-09-17: lives in `~/Software/xmlfile-validation/`, not in `particle_picker`, against the monorepo clone `~/Software/teamtomo`). Original wording: (i) xmlfile arrays == warpylib `CubicGrid.values` on `TS_042.xml`; (ii) hand-built `TiltSeries(..., local_shifts_2d=closure)` vs warpylib `get_position_in_all_tilts` on random points, enumerating the sign / order / frame hypotheses, target < 0.05 px; (iii) the G3 path: `array_to_grid` a 3×3×41 field into `00254.xml`, write, re-read with warpylib, evaluate; (iv) a synthetic `UseTilt`-False case.
 5. ~~`from_warp_xml` in torch-tilt-series~~ — written and committed locally (`c84ba36`, 0.12); to be adapted to the redesigned reader (0.15).
 6. ~~Post on Zulip~~ — done 2026-09-21; feedback and decisions in 0.14.
-7. ~~Redesign (0.15)~~ — done, PR #3 merged (`b925fb9`); loader and scripts ported (0.16). Remaining: rename the GitHub repo in place, PyPI release, loader PR.
+7. ~~Redesign (0.15)~~ — done, PR #3 merged (`b925fb9`); loader and scripts ported (0.16). Remaining: PyPI release, loader PR (repo renamed 2026-09-27).
 8. **Grids (0.14 #3):** reimplement Warp's 2-D/3-D deformation model in torch (observations) and fit TeamTomo's deformation model to them; ask Utz Ermel what exists first. Prototype and residuals in the validation folder.
 9. Later, back in `particle_picker`/JOLT: use `warpxmlfile` + the proven conventions for the G3 export (`local_alignment_BA.md` §7/§8).
 
