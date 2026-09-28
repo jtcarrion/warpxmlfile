@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import xmlfile
-from xmlfile import XmlDeclaration, XmlDocument, XmlElement
+from warpxmlfile import _xml as xmlfile
+from warpxmlfile._xml import XmlDeclaration, XmlDocument, XmlElement
 
 
 def test_element_defaults_are_independent():

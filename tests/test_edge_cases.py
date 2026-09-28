@@ -15,8 +15,8 @@ import warnings
 
 import pytest
 
-import xmlfile
-from xmlfile import XmlLossyContentWarning
+from warpxmlfile import _xml as xmlfile
+from warpxmlfile._xml import XmlLossyContentWarning
 
 
 def round_trips_exactly(source: str) -> bool:

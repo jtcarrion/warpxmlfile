@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-import xmlfile
-from xmlfile import XmlParseError
+from warpxmlfile import _xml as xmlfile
+from warpxmlfile._xml import XmlParseError
 
 
 def test_missing_file_raises_file_not_found(tmp_path):
@@ -39,15 +39,15 @@ def test_parse_error_is_a_value_error():
 
 
 def test_write_needs_a_filename():
-    from xmlfile.models import XmlDocument, XmlElement
-    from xmlfile.writer import XmlWriter
+    from warpxmlfile._xml.models import XmlDocument, XmlElement
+    from warpxmlfile._xml.writer import XmlWriter
 
     with pytest.raises(ValueError):
         XmlWriter(XmlDocument(root=XmlElement("a"))).write()
 
 
 def test_parser_requires_exactly_one_source(tmp_path):
-    from xmlfile.parser import XmlParser
+    from warpxmlfile._xml.parser import XmlParser
 
     with pytest.raises(TypeError):
         XmlParser()

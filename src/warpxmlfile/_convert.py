@@ -1,4 +1,4 @@
-"""Helpers for common patterns in XML metadata files.
+"""Conversion between XML text and Python values (private).
 
 The core model stores everything as strings. These functions are where values
 are coerced to numbers, lists and arrays, and back. They are generic: a
@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .models import XmlElement
+from ._xml.models import XmlElement
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-    from .typing import ValueFormat
+    from ._xml.typing import ValueFormat
 
 __all__ = [
     "array_to_grid",
