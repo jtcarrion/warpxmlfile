@@ -679,6 +679,43 @@ loader wants arrays; a `to_dataframe()` convenience is cheap to add later;
   reproduces the previous 00254 volume bit for bit (max diff 0.0); the A/B
   pair still warns on B.
 
+### 0.17 Grid strategy validated: native Warp model → observations → TeamTomo model (2026-09-30)
+
+Developers' second answer (2026-09-30): go with point (3); copy warpylib's
+`cubic_grid.py` for the native Warp model, use it to project sample points,
+and fit "our" deformation model; also curious whether the interpolating
+helper works. Tests, all in `~/Software/xmlfile-validation/` (`warp_model/`
+= verbatim `cubic_grid.py` + `interpolating_bspline.py` from warpem/warpylib
+`main`, MIT licence file included; the only change is the import made
+relative; scripts `t123_interpolating.py`, `t4_fit_teamtomo_model.py`,
+`t5_fitted_reconstruction.py`):
+
+| test | result |
+| --- | --- |
+| T1 basis matrices | einspline's matrix and torch-cubic-spline-grids' `CUBIC_B_SPLINE_MATRIX` are the same uniform cubic B-spline in different index conventions (not equal as arrays; equal as evaluators, see T2). |
+| T2 **interpolating helper** = warpylib `find_coefs_3d` + torch-cubic-spline-grids `interpolate_grid_3d` (coefficients as the grid, `u` rescaled from the M inner nodes to the M+2 coefficient lattice) | reproduces the native Warp model to **9e-5 Å** on M's 6×4×36 grid (values up to 36 Å) — so yes, it works. |
+| T3 standalone `warp_model` copy vs the vendored oracle | bit-identical (0.0 Å) on TS_042, 00254 B, the phase-C file. |
+| T4 **fit TeamTomo's model**: per-tilt `CubicBSplineGrid2d` (approximating B-spline), control values by linear least squares on a 32×32 lattice of native-model observations, held-out on 4000 random positions | **At Warp's own resolution the fit is exact**: held-out residual 0.0000 Å on all three files (3.4e-5 Å max on B, 1.5e-4 Å on TS_042 — float32). The fitted control values are *not* the Warp node values (max diff 16–48 Å): it is a genuine change of basis, interpolating → approximating coefficients, which the least squares recovers exactly. Finer lattices (2×, 4×) give 0.005–0.03 px / 0.001 px residuals (not nested with the package's boundary padding); "Warp res + 2" is exact for 3×3, 0.12 px for 6×4. Null test: zero field → zero control values. |
+| T5 reconstruction of 00254 B with the fitted model vs the exact native closure | **identical inside the image** (central 60 % of the volume: rms diff 1e-7); differences only in the outer shell (rms 6e-4, max 2e-2 on a volume std 2.7e-2) because the two splines **extrapolate differently outside [0, 1]** (13 Å max at 15 % beyond the edge) — a policy to define (clamp to the image, as Warp effectively does) rather than a modelling gap. B vs A (no grid): rms 1.7e-2. |
+| degenerate grids | 1×1×T (per-tilt constant, as in A) handled by the native model; `CubicBSplineGrid2d(resolution=(1,1))` is constructible. |
+
+**Conclusion.** Point (3) is not an approximation for Warp fields: TeamTomo's
+B-spline grid at the Warp lattice resolution spans the same function space, so
+"generate observations with the native model, fit our model" converts Warp's
+grids losslessly (per tilt, 2·H·W parameters, one small `lstsq`) and leaves
+`TiltSeries` carrying a TeamTomo-native `local_shifts_2d`. The same path
+generalises to other sources (AreTomo patches etc.). The interpolating helper
+also works (T2) but is no longer needed. Open policy: extrapolation outside
+the image. `GridVolumeWarp` (4-D) still has no hook.
+
+**Proposed shape for the follow-up PR** (to confirm with the developers):
+`torch_tilt_series/_warp/` = verbatim `cubic_grid.py` + `interpolating_bspline.py`
+(MIT, attribution; trim later), a `warp_grid_to_bspline_grid(nodes, ...)` fit
+utility (observations → `CubicBSplineGrid2d` control values), and
+`from_warp_xml(..., apply_local_shifts=True)` building the `local_shifts_2d`
+callable from the fitted grids; `torch-cubic-spline-grids` becomes a
+dependency of torch-tilt-series (it is a monorepo primitive).
+
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
 - `xmlfile/test_xml_files/`: unsanitised originals `00269.xml`, `00316.xml` (EMPIAR-10499) and `TS_001.xml` (bmp6, unpublished). Gitignored.
