@@ -14,8 +14,9 @@ Prepared for developing a small TeamTomo-style XML I/O package modeled after `st
 to_file` on the model as in alnfile), `write()` patches only edited values;
 113 tests on 3.10/3.12; byte-exact on the fixture and 187 local Warp files.
 The torch-tilt-series loader and the validation/workflow scripts consume it
-(0.12, 0.16). Still to do: PyPI release (who publishes is the developers' call), Zulip
-follow-up, loader PR. **2026-09-28:** `jtcarrion/warpxmlfile` is **public**;
+(0.12, 0.16). Still to do: PyPI release (who publishes is the developers' call), the two
+PRs (torch-cubic-spline-grids `from_interpolating_data`, then the loader with
+grids applied by default — prototyped and validated, 0.18). **2026-09-28:** `jtcarrion/warpxmlfile` is **public**;
 `teamtomo/teamtomo` forked to `jtcarrion/teamtomo`; `feat/warp-xml-loader`
 rebased onto upstream `c1c67df` (commits `854596a`, `b9600a9`) and pushed to
 the fork. Confirmed blocker for CI: `uv lock` cannot resolve `warpxmlfile`
@@ -715,6 +716,63 @@ utility (observations → `CubicBSplineGrid2d` control values), and
 `from_warp_xml(..., apply_local_shifts=True)` building the `local_shifts_2d`
 callable from the fitted grids; `torch-cubic-spline-grids` becomes a
 dependency of torch-tilt-series (it is a monorepo primitive).
+
+### 0.18 Prototype: `from_interpolating_data` + grids applied by default (2026-10-06, uncommitted)
+
+Follow-up to 0.17 after the developers asked "where does it make most sense to
+add this?" and about control points vs interpolating splines. Finding (T7,
+`scripts/t7_closed_form.py`): because `forward()` is linear in the control
+points, the control points that make a `CubicBSplineGrid2d` pass *through*
+Warp's node values come from **one square solve at the node positions**
+(9×9 for 3×3, 24×24 for 6×4; condition numbers 2.7 / 5.5) — no einspline
+code, no sampling, no least-squares fit. Verified to ~1e-4 Å vs the native
+model. So neither the 80-line evaluator nor the 30-line fitter is needed for
+Warp.
+
+Implemented as a prototype in `~/Software/teamtomo` (working tree of
+`feat/warp-xml-loader`, **uncommitted**; to be split into two branches/PRs):
+
+* `torch-cubic-spline-grids/_base_cubic_grid.py`: `CubicSplineGrid.
+  from_interpolating_data(data)` classmethod next to `from_grid_data` (~25
+  lines: grid points at i/(n−1), design matrix by one-hot probing of
+  `forward`, `torch.linalg.solve`, store as control points). Works for 1-D to
+  4-D and for Catmull-Rom too. Test: evaluating at the grid points returns
+  the data (6 parametrised cases). Full suite 48 passed; ruff/format clean;
+  mypy unchanged.
+* `torch-tilt-series/io.py`: `from_warp_xml(..., apply_local_shifts=True,
+  local_shifts_2d=None, ...)` builds `_warp_local_shifts_2d(...)`: one
+  2-channel `CubicBSplineGrid2d.from_interpolating_data(nodes)` per kept tilt
+  (1×1 grids expanded to a constant), parameters frozen
+  (`requires_grad_(False)`, re-enable to refine), the callable normalises the
+  projected position by `ImageDimensionsAngstrom`, **clamps to [0, 1]** (edge
+  policy), evaluates, negates (Warp subtracts), returns yx; the grids are
+  exposed as `local_shifts_2d.grids`. `apply_local_shifts=False` keeps the
+  global model; a caller's `local_shifts_2d` overrides. Missing
+  `ImageDimensionsAngstrom` raises. `torch-cubic-spline-grids` added to
+  `dependencies` + `[tool.uv.sources]`. Test: a 1×1×T grid of +1.5 Å shifts
+  the centre projection by (0, −1.5) Å; the switch and the override work.
+  51 passed; ruff clean; mypy adds no new error kinds.
+
+Validation through the real code path (`scripts/phase_e2_native_grids.py`):
+
+| file | `from_warp_xml` (default) vs warpylib, inside the image |
+| --- | --- |
+| 00254 B (MissAlignment 3×3×41) | rms 0.00014 px, max 0.0006 px |
+| phase-C 3×3×41 | rms 0.00014 px, max 0.0006 px |
+| TS_042 (M 6×4×36; dims supplied via the XML attribute) | rms 0.00018 px, max 0.0007 px |
+
+Reconstruction of 00254 B through `from_warp_xml` → torch-reconstruct-tomogram
+(GPU, 10 s): identical to the exact unclamped Warp closure in the central
+60 % of the volume (rms 1.6e-7); differences only at the edges (max 2.2e-2),
+which is the clamp vs Warp's extrapolation — expected and documented; vs A
+(no grid) rms 1.7e-2.
+
+**Scope note for the developers:** `from_interpolating_data` is a B-spline
+shortcut, exact because Warp's grids *are* cubic B-splines on a lattice. A
+source with a different local model (AreTomo's per-patch shifts combined by
+its own weighting) cannot go through it; that is where Alister's
+"reimplement → sample → fit" route remains the general path, ending in the
+same `CubicBSplineGrid2d`.
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
