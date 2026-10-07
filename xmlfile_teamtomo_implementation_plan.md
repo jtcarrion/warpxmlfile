@@ -14,9 +14,11 @@ Prepared for developing a small TeamTomo-style XML I/O package modeled after `st
 to_file` on the model as in alnfile), `write()` patches only edited values;
 113 tests on 3.10/3.12; byte-exact on the fixture and 187 local Warp files.
 The torch-tilt-series loader and the validation/workflow scripts consume it
-(0.12, 0.16). Still to do: PyPI release (who publishes is the developers' call), the two
-PRs (torch-cubic-spline-grids `from_interpolating_data`, then the loader with
-grids applied by default — prototyped and validated, 0.18). **2026-09-28:** `jtcarrion/warpxmlfile` is **public**;
+(0.12, 0.16). Still to do (per the 2026-10-07 meeting, plan in 0.21): migrate
+`warpxmlfile` into the monorepo as `packages/io/warpxmlfile` (PR A), then
+`from_interpolating_data` (PR B) and the loader with grids applied by default
+(PR C); PyPI publication then happens through the maintainers' release
+process (pending publisher needed). Volume warp correction in 0.22. **2026-09-28:** `jtcarrion/warpxmlfile` is **public**;
 `teamtomo/teamtomo` forked to `jtcarrion/teamtomo`; `feat/warp-xml-loader`
 rebased onto upstream `c1c67df` (commits `854596a`, `b9600a9`) and pushed to
 the fork. Confirmed blocker for CI: `uv lock` cannot resolve `warpxmlfile`
@@ -783,14 +785,16 @@ docs ("Image warp" XxY, "Volume warp" XxYxZxT, "Stage angles").
 | Warp grid | dims | sampled at | role in the model | TeamTomo mapping |
 | --- | --- | --- | --- | --- |
 | `GridMovementX/Y` | 3-D (x, y, tilt) | `(x/ImgW, y/ImgH, t/(T−1))`, **subtracted** after projection | 2-D image shift | **done**: per-tilt `CubicBSplineGrid2d.from_interpolating_data` → `local_shifts_2d` (0.18) |
-| `GridVolumeWarpX/Y/Z` | **4-D (x, y, z, dose)** | `(x/VolW, y/VolH, z/VolD, (dose_t−min)/(max−min))`, **added** to the centred point *before* rotation | 3-D sample deformation vs dose; 4th axis is dose, not tilt index | needs a **per-tilt** `local_shifts`: `TiltSeries.local_shifts` is called once with `(n, 3)` before projection (tilt-independent). Proposal: accept `(n, n_tilts, 3)` too and broadcast `projected[p,t] = M_t·(P + warp_t(P))`. Representation is exact with one `CubicBSplineGrid3d.from_interpolating_data` per tilt (a tensor-product spline at fixed dose is a 3-D spline on the same lattice). No 4-D grid at runtime, no new math — one ~30-line wrapper. **Ask the developers whether they want the per-tilt hook.** |
+| `GridVolumeWarpX/Y/Z` | **4-D (x, y, z, dose)** | `(x/VolW, y/VolH, z/VolD, (dose_t−min)/(max−min))`, **added** to the centred point *before* rotation | 3-D sample deformation vs dose; 4th axis is dose, not tilt index | **Corrected 2026-10-07 (see 0.22): this grid is quadrilinear (`LinearGrid4D`), not a cubic spline**, so `from_interpolating_data` does *not* apply. Per tilt it is a trilinear 3-D grid (exact at a fixed dose, interior). Still needs a **per-tilt** `local_shifts` hook: `TiltSeries.local_shifts` is called once with `(n, 3)` before projection. Proposal: accept `(n, n_tilts, 3)` and broadcast `projected[p,t] = M_t·(P + warp_t(P))`; evaluation via trilinear interpolation (e.g. `F.grid_sample(align_corners=True)` per tilt, or a port of `EvalLinear4`). **Ask the developers whether they want the per-tilt hook.** |
 | `GridAngleX/Y/Z` | usually 1×1×T | `(x/VolW, y/VolW, t)` | per-tilt rotation *correction* `Rz(γ)Ry(β)Rx(α)·TiltMatrix`; used only for particle orientations (`GetAngleInAllTilts`), **not** for positions | for a 1×1×T grid, fold into the existing per-tilt `tilt_axis_angle / tilt_angles / x_tilts` by a matrix → Euler decomposition (`TiltSeries` already is `Rz·Ry·Rx` per tilt). Only matters for particle-pose export, not tomograms. |
 | `GridCTFDefocus/Delta/Angle/Phase` | 1×1×T | `(0.5, 0.5, t/(T−1))` | per-tilt CTF; z → defocus offset | not `TiltSeries` geometry; per-tilt defocus for torch-ctf / reconstruction later |
 | `GridDoseBfacs*`, `GridDoseWeights`, `GridLocationBfacs/Weights` | 1×1×T / spatial | — | B-factors and weights for averaging | out of scope |
 
-Conclusion: no `_warp_local_shifts_3d/_4d` *math* is needed —
-`from_interpolating_data` covers 1-D to 4-D; only thin Warp-specific wrappers
-and, for the volume warp, a per-tilt `local_shifts` hook in torch-tilt-series.
+Conclusion (revised 2026-10-07): `from_interpolating_data` covers every
+**cubic** Warp grid (`GridMovement`, `GridCTF*`, `GridAngle*`, dose/location
+grids — all `CubicGrid` in WarpLib). The **volume warp is linear**, so it
+needs a trilinear evaluator and the per-tilt `local_shifts` hook, not a new
+spline method. Thin Warp-specific wrappers either way.
 
 ### 0.20 Before / after / next — the simplest honest picture (2026-10-07)
 
@@ -830,6 +834,70 @@ fitter, no Warp code in torch-cubic-spline-grids, no change to `TiltSeries`.
 5. Resist adding options: no sampling/fitting path for Warp (not needed), no
    resolution choices (exact only at Warp's lattice), no `apply_*` flags per
    grid type until a second grid type is actually wired.
+
+### 0.21 Integration plan per the TeamTomo notes (2026-10-07, for discussion)
+
+Meeting outcome: add `warpxmlfile` **into the monorepo** following
+`notes/create-new-package.md` / `notes/migrate-existing-repo.md` (the latter
+says it "should also apply when migrating in a new package not previously
+part of TeamTomo"), and release through `notes/release-instructions.md`.
+Facts checked in the monorepo (`origin/main` @ `7a273de`): the uv workspace
+already lists `packages/io/*` as a member glob, but no `packages/io/`
+directory and no `src/teamtomo/io/` re-export module exist yet — warpxmlfile
+would be the first `io` package. Root `requires-python >= 3.11` (the migrate
+note's "3.12" is stale). Releases are driven by one `teamtomo@vX.Y.Z` tag
+(coordinated, by the maintainers) or a single `warpxmlfile@vX.Y.Z` tag; a
+never-published package needs a **pending publisher** on PyPI (owner
+`teamtomo`, repo `teamtomo`, workflow `deploy.yml`) registered *before* its
+first release — the preflight script lists it. **This removes the "who
+publishes" blocker**: once warpxmlfile is a workspace member, `uv lock`
+resolves it, CI passes, and PyPI publication is part of their release.
+
+Proposed sequence — three small PRs from the fork `jtcarrion/teamtomo`:
+
+| PR | content | notes |
+| --- | --- | --- |
+| **A — add `packages/io/warpxmlfile`** (migrate note, Option A: copy files, no history) | copy `src/`, `tests/`, `README.md`, `pyproject.toml`; **LICENSE = copy of the monorepo root LICENSE** (TeamTomo copyright); drop `.github/`, `.pre-commit-config.yaml`, `.gitignore`; pyproject: `[tool.hatch.version]` with `tag-pattern = "^warpxmlfile@v(?P<version>.+)$"`, `fallback-version = "0.0.1"`, `[tool.hatch.version.raw-options]` (`search_parent_directories`, `tag_regex`, `git_describe_command`), URLs → `github.com/teamtomo/teamtomo`, `requires-python >= 3.11` (align with the workspace), `[dependency-groups]` per skel, `[tool.coverage.run] source = ["warpxmlfile"]`; root `pyproject.toml`: add `"warpxmlfile"` to `dependencies` and `warpxmlfile = { workspace = true }` to `[tool.uv.sources]`; new `src/teamtomo/io/__init__.py` with the try/except re-export pattern (and wire it like `primitives`); `uv sync --all-extras --all-packages`, `uv run pytest packages/io/warpxmlfile/tests`, `uv build packages/io/warpxmlfile`; commit the updated `uv.lock`. Standalone repo: keep as is until merged, then add a pointer/archive note (migrate note "Next steps"). | The corpus test stays opt-in (`--xml-corpus`); fixture `TS_1.xml` (public EMPIAR-10491) ships. |
+| **B — `from_interpolating_data`** in torch-cubic-spline-grids | the ~25-line classmethod + 6 parametrised tests (0.18) | independent of A; smallest review |
+| **C — `from_warp_xml` with grids applied by default** | the loader (global part already on `feat/warp-xml-loader`) + `_warp_local_shifts_2d` + `torch-cubic-spline-grids` and `warpxmlfile` dependencies (`io` extra) + tests; `uv lock` | depends on A and B being merged (or stack the branches) |
+
+Open for the developers: PR order/stacking; whether `warpxmlfile` should be a
+hard dependency of torch-tilt-series or stay in the `io` extra (alnfile /
+etomofiles are in the extra → keep it there); and the per-tilt `local_shifts`
+hook for the volume warp (0.22).
+
+### 0.22 Correction: M's volume warp is quadrilinear, not cubic (2026-10-07)
+
+Utz Ermel's commit `dd35fa6` on `uermel/warpylib` (2026-08-29, "fix: volume
+warp grids are quadrilinear LinearGrid4D, not cubic splines") — **not yet in
+`warpem/warpylib` `main`** (last commit `8252c40`, 2026-07-28, the version we
+vendored): WarpLib stores `GridVolumeWarpX/Y/Z` as `LinearGrid4D`
+(`WarpLib/LinearGrid4D.cs`, `CPU.EvalLinear4`), while `GridMovementX/Y` are
+`CubicGrid` (`TiltSeries.cs` lines 125–143 and 2075–2091; confirmed in the
+sparse clone). Golden tests against the real WarpLib match to 0.01 Å. His
+`linear_grid.py` (176 lines) is an exact port, including the asymmetric
+boundary rule (below 0: the first cell extrapolates linearly; above 1: the
+value collapses to the last node), dtype-generic and differentiable.
+
+Consequences for us:
+* **Nothing changes for the 2-D image warp** (`GridMovement` is cubic): the
+  phase A–E/E2 results, `from_interpolating_data` and the loader stand.
+* 0.19's claim that the volume warp is exactly representable by cubic
+  B-spline grids was wrong; corrected above. The vendored `warpylib_min`
+  evaluates it with the wrong interpolant; we had zeroed it in all
+  comparisons, so no result depended on it — only the "1.7 px projected"
+  magnitude quoted in 0.11.2 was computed with the cubic evaluator.
+  Re-measured on TS_042 with the quadrilinear port (`warp_model/
+  linear_grid.py`, copied from the commit): node RMS 1.4/1.3/2.2 Å (x/y/z),
+  evaluated-field RMS 0.71/0.63/1.78 Å (the cubic evaluator gave
+  1.26/1.14/2.80 Å; |cubic − linear| up to 5 Å).
+* For a future volume-warp hook: per tilt (fixed dose) the field is a
+  **trilinear** 3-D grid — exact with `F.grid_sample(mode="bilinear",
+  align_corners=True)` on a `(3, Z, Y, X)` volume (or a port of
+  `EvalLinear4`), plus a clamp/extrapolation policy at the volume faces.
+* The vendored copy in `particle_picker` (`src/external/warpylib_min`)
+  should be updated when the fix lands upstream (or patched from the fork)
+  before any JOLT work touches `GridVolumeWarp`.
 
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
