@@ -774,6 +774,63 @@ its own weighting) cannot go through it; that is where Alister's
 "reimplement → sample → fit" route remains the general path, ending in the
 same `CubicBSplineGrid2d`.
 
+### 0.19 Warp's higher-dimensional grids and the TeamTomo mapping (2026-10-07)
+
+Read from `WarpLib/TiltSeries/TiltSeries.cs` (`GetPositionInAllTilts` 402–516,
+`GetAngleInAllTilts` 668–705; warpylib matches line for line) and the mcore
+docs ("Image warp" XxY, "Volume warp" XxYxZxT, "Stage angles").
+
+| Warp grid | dims | sampled at | role in the model | TeamTomo mapping |
+| --- | --- | --- | --- | --- |
+| `GridMovementX/Y` | 3-D (x, y, tilt) | `(x/ImgW, y/ImgH, t/(T−1))`, **subtracted** after projection | 2-D image shift | **done**: per-tilt `CubicBSplineGrid2d.from_interpolating_data` → `local_shifts_2d` (0.18) |
+| `GridVolumeWarpX/Y/Z` | **4-D (x, y, z, dose)** | `(x/VolW, y/VolH, z/VolD, (dose_t−min)/(max−min))`, **added** to the centred point *before* rotation | 3-D sample deformation vs dose; 4th axis is dose, not tilt index | needs a **per-tilt** `local_shifts`: `TiltSeries.local_shifts` is called once with `(n, 3)` before projection (tilt-independent). Proposal: accept `(n, n_tilts, 3)` too and broadcast `projected[p,t] = M_t·(P + warp_t(P))`. Representation is exact with one `CubicBSplineGrid3d.from_interpolating_data` per tilt (a tensor-product spline at fixed dose is a 3-D spline on the same lattice). No 4-D grid at runtime, no new math — one ~30-line wrapper. **Ask the developers whether they want the per-tilt hook.** |
+| `GridAngleX/Y/Z` | usually 1×1×T | `(x/VolW, y/VolW, t)` | per-tilt rotation *correction* `Rz(γ)Ry(β)Rx(α)·TiltMatrix`; used only for particle orientations (`GetAngleInAllTilts`), **not** for positions | for a 1×1×T grid, fold into the existing per-tilt `tilt_axis_angle / tilt_angles / x_tilts` by a matrix → Euler decomposition (`TiltSeries` already is `Rz·Ry·Rx` per tilt). Only matters for particle-pose export, not tomograms. |
+| `GridCTFDefocus/Delta/Angle/Phase` | 1×1×T | `(0.5, 0.5, t/(T−1))` | per-tilt CTF; z → defocus offset | not `TiltSeries` geometry; per-tilt defocus for torch-ctf / reconstruction later |
+| `GridDoseBfacs*`, `GridDoseWeights`, `GridLocationBfacs/Weights` | 1×1×T / spatial | — | B-factors and weights for averaging | out of scope |
+
+Conclusion: no `_warp_local_shifts_3d/_4d` *math* is needed —
+`from_interpolating_data` covers 1-D to 4-D; only thin Warp-specific wrappers
+and, for the volume warp, a per-tilt `local_shifts` hook in torch-tilt-series.
+
+### 0.20 Before / after / next — the simplest honest picture (2026-10-07)
+
+**Before this work:** `xmlfile` did not exist; torch-tilt-series loaded AreTomo
+(`alnfile`) and etomo (`etomofiles`) only; `TiltSeries` already had the
+`local_shifts_2d` / `local_shifts` callables and a `levelled2tomo` transform;
+torch-cubic-spline-grids had approximating B-spline and Catmull-Rom grids with
+`from_grid_data` (control points) but no way to build a grid *through* given
+values; Warp XML was readable only via lxml-based tools that drop content
+(cryoet-alignment, global only) or the full warpylib (`cubic_grid.py`).
+
+**Added (all small):**
+* `warpxmlfile` (new repo, public): byte-exact Warp/M XML read/write, typed
+  `WarpTiltSeries`, edits change only edited values. 113 tests.
+* torch-cubic-spline-grids: `from_interpolating_data()` (~25 lines) — one
+  linear solve, generic 1-D–4-D.
+* torch-tilt-series: `from_warp_xml()` (same shape as the other loaders) +
+  `_warp_local_shifts_2d()` (~40 lines) applying the 2-D grids by default
+  through the existing `local_shifts_2d` hook; `torch-cubic-spline-grids`
+  dependency. Validated to ~1e-4 px vs warpylib and end to end in
+  torch-reconstruct-tomogram (beads land where IMOD puts them).
+* A reusable "XML + stack → tomogram" script and a validation harness
+  (warpylib as oracle) outside the repos.
+
+**Not added, on purpose:** no einspline port, no copied `cubic_grid.py`, no
+fitter, no Warp code in torch-cubic-spline-grids, no change to `TiltSeries`.
+
+**Possible simplifications / next steps, in order of value:**
+1. Keep the user surface to two things: `warpxmlfile.read()` and
+   `from_warp_xml()`; everything else stays private (`_warp_local_shifts_2d`,
+   the grids reachable via `local_shifts_2d.grids` for people who want them).
+2. Per-tilt `local_shifts` hook in `TiltSeries` (0.19) — then the volume warp
+   is one more wrapper, same pattern. Ask first.
+3. Edge policy: clamp to the image is implemented; say so in one docstring
+   line and leave it.
+4. `GridAngle*` folding only when a particle-pose export needs it.
+5. Resist adding options: no sampling/fitting path for Warp (not needed), no
+   resolution choices (exact only at Warp's lattice), no `apply_*` flags per
+   grid type until a second grid type is actually wired.
+
 ### 0.10 HPC-only resources (will not exist elsewhere)
 
 - `xmlfile/test_xml_files/`: unsanitised originals `00269.xml`, `00316.xml` (EMPIAR-10499) and `TS_001.xml` (bmp6, unpublished). Gitignored.
