@@ -23,7 +23,7 @@ name = "warpxmlfile"
 dynamic = ["version"]
 description = "Read and write Warp / M tilt-series XML files in Python."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Jackson Carrion", email = "jcarrion@mit.edu" }]
 keywords = ["warp", "xml", "cryo-em", "cryo-et", "metadata", "io"]
@@ -33,7 +33,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -67,7 +66,7 @@ dev = [
 # https://docs.astral.sh/ruff
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py311"
 src = ["src"]
 fix = true
 # unsafe-fixes = true
